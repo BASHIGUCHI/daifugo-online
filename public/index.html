@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Online Daifugo</title>
+    <style>
+        body { background-color: #05100a; color: #fff; font-family: sans-serif; margin: 0; height: 100vh; overflow: hidden; display: flex; justify-content: center; align-items: center; }
+        #game-table { position: relative; width: 100%; max-width: 1100px; height: 100%; max-height: 800px; background: radial-gradient(circle at center, #1e5735 0%, #0a2315 100%); border: 8px solid #2c3e50; border-radius: 20px; box-shadow: 0 0 50px rgba(0,0,0,0.9); }
+        .info-box { position: absolute; background: rgba(0,0,0,0.7); border: 2px solid #555; padding: 8px 15px; border-radius: 10px; text-align: center; min-width: 100px; transition: all 0.3s; }
+        .active-turn { border-color: #f1c40f; box-shadow: 0 0 20px rgba(241, 196, 15, 0.6); transform: scale(1.05); }
+        
+        /* 配置: 常に「自分」が下になるようにJSで制御するためのID */
+        #area-top { top: 20px; left: 50%; transform: translateX(-50%); }
+        #area-left { top: 40%; left: 20px; transform: translateY(-50%); }
+        #area-right { top: 40%; right: 20px; transform: translateY(-50%); }
+        #area-bottom { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); width: 85%; text-align: center; background: rgba(0,0,0,0.4); padding: 10px; border-radius: 15px; z-index: 20; }
+        
+        #field-area { position: absolute; top: 45%; left: 50%; transform: translate(-50%, -50%); width: 500px; height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; }
+        .card { display: inline-flex; flex-direction: column; justify-content: space-between; width: 60px; height: 90px; background-color: #fff; color: #000; border-radius: 6px; margin: 3px; padding: 4px; font-weight: bold; font-size: 14px; box-shadow: 2px 2px 6px rgba(0,0,0,0.4); cursor: pointer; border: 1px solid #aaa; box-sizing: border-box; }
+        .card.red { color: #d00; }
+        .card.selected { transform: translateY(-20px); border: 3px solid #3498db; background-color: #eaf2f8; }
+        #my-hand { display: flex; justify-content: center; flex-wrap: wrap; min-height: 100px; }
+        #field-cards { display: flex; justify-content: center; align-items: center; min-height: 100px; width: 100%; }
+        .badges { display: flex; gap: 8px; margin-bottom: 8px; height: 25px; }
+        .badge { padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; color: white; display: none; }
+        #msg-box { height: 30px; color: #f1c40f; font-weight: bold; font-size: 1.2rem; text-shadow: 1px 1px 2px black; }
+        button { padding: 10px 25px; border-radius: 30px; border: none; font-weight: bold; cursor: pointer; margin: 0 5px; font-size: 1rem; }
+        .btn-play { background: #27ae60; color: white; }
+        .btn-pass { background: #c0392b; color: white; }
+        .btn-play:disabled, .btn-pass:disabled { opacity: 0.3; cursor: not-allowed; }
+        #wait-screen { position: absolute; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; }
+    </style>
+</head>
+<body>
+    <div id="wait-screen">
+        <h1>接続中...</h1>
+        <p id="wait-msg">他のプレイヤーを待っています (<span id="p-count">0</span>/4)</p>
+    </div>
+
+    <div id="game-table">
+        <div style="position:absolute; top:15px; right:20px; text-align:right; z-index:100;">
+            ROUND: <span id="round-num">1</span>
+        </div>
+
+        <div id="area-top" class="info-box">Player <span id="nm-top"></span><br><span id="cnt-top">0</span>枚<br><span id="rnk-top" style="color:#f1c40f"></span></div>
+        <div id="area-left" class="info-box">Player <span id="nm-left"></span><br><span id="cnt-left">0</span>枚<br><span id="rnk-left" style="color:#f1c40f"></span></div>
+        <div id="area-right" class="info-box">Player <span id="nm-right"></span><br><span id="cnt-right">0</span>枚<br><span id="rnk-right" style="color:#f1c40f"></span></div>
+
+        <div id="field-area">
+            <div id="msg-box"></div>
+            <div class="badges">
+                <span id="bdg-rev" class="badge" style="background:#3498db">革命</span>
+                <span id="bdg-11" class="badge" style="background:#9b59b6">11バック</span>
+                <span id="bdg-bind" class="badge" style="background:#e67e22">縛り</span>
+            </div>
+            <div id="field-cards"></div>
+        </div>
+
+        <div id="area-bottom">
+            <div style="margin-bottom:5px;">あなた (P<span id="my-p-num"></span>) <span id="rnk-bottom" style="color:#f1c40f"></span></div>
+            <div id="my-hand"></div>
+            <div style="margin-top:10px;">
+                <button class="btn-play" id="btn-play" onclick="userPlay()">出す</button>
+                <button class="btn-pass" id="btn-pass" onclick="userPass()">パス</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const SUITS = ['♠', '♥', '♦', '♣'];
+        const DISPLAYS = { 1:'A', 11:'J', 12:'Q', 13:'K', 0:'JK' };
+        
+        let myIdx = -1;
+        let myHand = [];
+        let selected = [];
+
+        // --- ソケット受信処理 ---
+        socket.on('initInfo', (data) => {
+            myIdx = data.myIdx;
+            document.getElementById('my-p-num').innerText = myIdx + 1;
+        });
+
+        socket.on('playerUpdate', (count) => {
+            document.getElementById('p-count').innerText = count;
+            if(count === 4) {
+                document.getElementById('wait-screen').style.display = 'none';
+            } else if(count > 4) {
+                document.getElementById('wait-msg').innerText = "満員です。観戦モードはありません。";
+            }
+        });
+
+        socket.on('gameFull', () => {
+            document.getElementById('wait-msg').innerText = "満員のため参加できません";
+        });
+
+        socket.on('updateState', (state) => {
+            myHand = state.myHand;
+            renderHand();
+            renderField(state.field);
+            renderInfo(state);
+            renderOpponents(state);
+        });
+
+        socket.on('msg', (txt) => {
+            document.getElementById('msg-box').innerText = txt;
+        });
+
+        // --- 描画処理 ---
+        function renderHand() {
+            const div = document.getElementById('my-hand');
+            div.innerHTML = "";
+            myHand.forEach((c) => {
+                let el = createCardEl(c);
+                if(selected.includes(c.id)) el.classList.add('selected');
+                el.onclick = () => toggleSelect(c.id);
+                div.appendChild(el);
+            });
+        }
+
+        function createCardEl(c) {
+            let d = document.createElement('div');
+            d.className = "card";
+            if(c.suit==='♥'||c.suit==='♦') d.classList.add('red');
+            let disp = DISPLAYS[c.num] || c.num;
+            d.innerHTML = `<div>${disp}</div><div style="font-size:24px; text-align:center;">${c.suit}</div><div style="text-align:right; transform:rotate(180deg);">${disp}</div>`;
+            return d;
+        }
+
+        function renderField(cards) {
+            const div = document.getElementById('field-cards');
+            div.innerHTML = "";
+            cards.forEach(c => div.appendChild(createCardEl(c)));
+        }
+
+        function renderInfo(state) {
+            document.getElementById('round-num').innerText = state.info.round;
+            document.getElementById('bdg-rev').style.display = state.info.rev ? 'block' : 'none';
+            document.getElementById('bdg-11').style.display = state.info.eleven ? 'block' : 'none';
+            document.getElementById('bdg-bind').style.display = state.info.bind ? 'block' : 'none';
+
+            let isMyTurn = (state.turn === myIdx);
+            document.getElementById('btn-play').disabled = !isMyTurn;
+            document.getElementById('btn-pass').disabled = !isMyTurn;
+        }
+
+        function renderOpponents(state) {
+            // 自分(myIdx)を基準に、左、上、右が誰かを計算
+            let positions = [
+                { id: 'area-bottom', idx: myIdx },
+                { id: 'area-left', idx: (myIdx + 1) % 4 },
+                { id: 'area-top', idx: (myIdx + 2) % 4 },
+                { id: 'area-right', idx: (myIdx + 3) % 4 }
+            ];
+
+            let finished = [...state.winners, ...state.fouled];
+
+            positions.forEach(pos => {
+                let el = document.getElementById(pos.id);
+                // ターン表示
+                if(state.turn === pos.idx && !finished.includes(pos.idx)) el.classList.add('active-turn');
+                else el.classList.remove('active-turn');
+
+                // ランク表示
+                let rnkStr = "";
+                let wIdx = state.winners.indexOf(pos.idx);
+                if(wIdx >= 0) rnkStr = ["大富豪","富豪","貧民","大貧民"][wIdx];
+                if(state.fouled.includes(pos.idx)) rnkStr = "反則負";
+                
+                let rnkElId = pos.id.replace('area-', 'rnk-');
+                document.getElementById(rnkElId).innerText = rnkStr;
+
+                // 枚数表示（相手のみ）
+                if(pos.id !== 'area-bottom') {
+                    let cntId = pos.id.replace('area-', 'cnt-');
+                    let nmId = pos.id.replace('area-', 'nm-');
+                    document.getElementById(cntId).innerText = state.counts[pos.idx];
+                    document.getElementById(nmId).innerText = pos.idx + 1;
+                    el.style.opacity = finished.includes(pos.idx) ? 0.5 : 1;
+                }
+            });
+        }
+
+        // --- 操作 ---
+        function toggleSelect(cid) {
+            if(selected.includes(cid)) selected = selected.filter(id => id !== cid);
+            else selected.push(cid);
+            renderHand();
+        }
+
+        function userPlay() {
+            if(selected.length === 0) return;
+            socket.emit('playCard', { cardIds: selected });
+            selected = []; // 送信後クリア
+        }
+
+        function userPass() {
+            socket.emit('pass');
+            selected = [];
+        }
+    </script>
+</body>
+</html>
