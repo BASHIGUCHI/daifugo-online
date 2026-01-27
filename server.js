@@ -6,9 +6,15 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
+// Render等の環境変数ポートに対応
+const PORT = process.env.PORT || 3000;
+
 app.use(express.static('public'));
 
+/* --- ゲームステート --- */
 let players = []; 
+// playersの中身: { id: "socketid", hand: [], name: "入力された名前" }
+
 let gameState = {
     round: 1,
     turn: 0,
@@ -23,6 +29,7 @@ let gameState = {
     lastPlayer: -1
 };
 
+/* --- 定数・カード生成 --- */
 const SUITS = ['♠', '♥', '♦', '♣'];
 function createDeck() {
     let deck = [];
@@ -37,50 +44,67 @@ function createDeck() {
     return deck.sort(() => Math.random() - 0.5);
 }
 
+/* --- 通信処理 --- */
 io.on('connection', (socket) => {
-    console.log('Player connected:', socket.id);
+    console.log('Connected:', socket.id);
+    // ※接続時はまだ参加させない
 
-    if (players.length < 4) {
-        // プレイヤー登録
-        players.push({ id: socket.id, hand: [], name: `P${players.length + 1}` });
-        let myIdx = players.length - 1;
-        
-        socket.emit('initInfo', { myIdx: myIdx });
-        io.emit('playerUpdate', players.length);
+    // ■ 名前を受け取って参加登録
+    socket.on('joinGame', (data) => {
+        if (players.length < 4) {
+            let name = data.name || `Guest${players.length + 1}`;
+            // 20文字以内にカット
+            name = name.substring(0, 12);
 
-        if (players.length === 4) {
-            startGame();
+            players.push({ id: socket.id, hand: [], name: name });
+            let myIdx = players.length - 1;
+            
+            // 本人にインデックス通知
+            socket.emit('initInfo', { myIdx: myIdx });
+            
+            // 全員に参加状況（人数と名前リスト）を通知
+            io.emit('playerUpdate', { 
+                count: players.length, 
+                names: players.map(p => p.name) 
+            });
+
+            if (players.length === 4) {
+                startGame();
+            }
+        } else {
+            socket.emit('gameFull');
         }
-    } else {
-        socket.emit('gameFull');
-    }
+    });
 
     socket.on('playCard', (data) => {
         let pIdx = players.findIndex(p => p.id === socket.id);
-        if (pIdx !== gameState.turn) return;
+        if (pIdx === -1 || pIdx !== gameState.turn) return;
 
         let cards = data.cardIds.map(cid => players[pIdx].hand.find(c => c.id === cid)).filter(c => c);
         let check = checkRules(cards);
-        
-        if (check.ok) {
-            processPlay(pIdx, cards, check.type);
-        }
+        if (check.ok) processPlay(pIdx, cards, check.type);
     });
 
     socket.on('pass', () => {
         let pIdx = players.findIndex(p => p.id === socket.id);
-        if (pIdx !== gameState.turn) return;
+        if (pIdx === -1 || pIdx !== gameState.turn) return;
         processPass(pIdx);
     });
 
     socket.on('disconnect', () => {
         console.log('Disconnect:', socket.id);
+        // 切断したプレイヤーを削除
         players = players.filter(p => p.id !== socket.id);
-        io.emit('playerUpdate', players.length);
-        gameState.round = 1; // 簡易リセット
+        io.emit('playerUpdate', { 
+            count: players.length, 
+            names: players.map(p => p.name) 
+        });
+        // 誰か抜けたらゲームリセット
+        if(gameState.round > 0) gameState.round = 1; 
     });
 });
 
+/* --- ゲーム進行ロジック --- */
 function startGame() {
     gameState.field = [];
     gameState.passed = [];
@@ -110,6 +134,9 @@ function sortHand(hand) {
 }
 
 function broadcastState() {
+    // 全員の名前リストを作成
+    let playerNames = players.map(p => p.name);
+
     players.forEach((p, i) => {
         let opponentCounts = players.map(pl => pl.hand.length);
         io.to(p.id).emit('updateState', {
@@ -117,6 +144,7 @@ function broadcastState() {
             field: gameState.field,
             turn: gameState.turn,
             counts: opponentCounts,
+            names: playerNames, // 名前リストを送る
             info: {
                 rev: gameState.isRevolution,
                 eleven: gameState.isElevenBack,
@@ -130,11 +158,12 @@ function broadcastState() {
 }
 
 function processPlay(pIdx, cards, type) {
+    // 禁止あがりチェック
     if (players[pIdx].hand.length === cards.length) {
         if (isForbiddenMove(cards, true)) {
             gameState.fouled.push(pIdx);
             players[pIdx].hand = [];
-            io.emit('msg', `P${pIdx+1} 反則負け！`);
+            io.emit('msg', `${players[pIdx].name} 反則負け！`);
             checkGameEnd();
             broadcastState();
             return;
@@ -147,39 +176,48 @@ function processPlay(pIdx, cards, type) {
     gameState.passed = [];
     players[pIdx].hand = players[pIdx].hand.filter(c => !cards.some(target => target.id === c.id));
 
+    // 特殊効果
+    let msg = "";
     if (type !== 'stairs' && cards.some(c => c.num === 8)) {
-        io.emit('msg', "8切り！");
+        msg = "8切り！";
         resetField();
         gameState.turn = pIdx;
     } 
     else if (gameState.field.length===1 && cards.length===1 && cards[0].suit==='♠' && cards[0].num===3 && cards[0].isSpe3) {
-         io.emit('msg', "スペ3返し！");
+         msg = "スペ3返し！";
          resetField();
          gameState.turn = pIdx;
     }
     else {
-        if (cards.length >= 4) { gameState.isRevolution = !gameState.isRevolution; io.emit('msg', "革命！"); }
-        if (type !== 'stairs' && cards.some(c => c.num === 11)) { gameState.isElevenBack = true; io.emit('msg', "11バック！"); }
+        if (cards.length >= 4) { gameState.isRevolution = !gameState.isRevolution; msg = "革命！"; }
+        if (type !== 'stairs' && cards.some(c => c.num === 11)) { gameState.isElevenBack = true; msg = "11バック！"; }
         
         if (players[pIdx].hand.length === 0) {
             gameState.winners.push(pIdx);
-            io.emit('msg', `P${pIdx+1} あがり！`);
+            io.emit('msg', `${players[pIdx].name} あがり！`);
         }
         checkGameEnd();
         if(gameState.field.length > 0) nextTurn(); 
     }
+    if(msg) io.emit('msg', msg);
+    
     broadcastState();
 }
 
 function processPass(pIdx) {
     if (!gameState.passed.includes(pIdx)) gameState.passed.push(pIdx);
+    
     let active = 4 - gameState.winners.length - gameState.fouled.length;
+    // バグ防止: activeが1人以下の時は即終了判定
+    if (active <= 1) { checkGameEnd(); return; }
+
     if (gameState.passed.length >= active - 1) {
         io.emit('msg', "場が流れました");
         resetField();
         gameState.turn = gameState.lastPlayer;
         let loop=0;
-        while((gameState.winners.includes(gameState.turn) || gameState.fouled.includes(gameState.turn)) && loop<10){
+        let allFinished = [...gameState.winners, ...gameState.fouled];
+        while(allFinished.includes(gameState.turn) && loop<10){
             gameState.turn = (gameState.turn + 1) % 4; loop++;
         }
     } else {
@@ -190,10 +228,11 @@ function processPass(pIdx) {
 
 function nextTurn() {
     let loop = 0;
+    let allFinished = [...gameState.winners, ...gameState.fouled];
     do {
         gameState.turn = (gameState.turn + 1) % 4;
         loop++;
-    } while ((gameState.winners.includes(gameState.turn) || gameState.fouled.includes(gameState.turn)) && loop < 10);
+    } while (allFinished.includes(gameState.turn) && loop < 10);
 }
 
 function resetField() {
@@ -211,6 +250,7 @@ function checkGameEnd() {
     }
 }
 
+/* --- ルール判定 --- */
 function checkRules(cards) {
     if(cards.length === 0) return {ok:false};
     let type = "unknown";
@@ -245,9 +285,23 @@ function checkRules(cards) {
     if(isStairs) type = "stairs"; else if(isPair) type = (cards.length === 1) ? "single" : "pair"; else return {ok:false};
 
     if(gameState.field.length > 0) {
-        if(gameState.field.length === 1 && gameState.field[0].isJoker && cards.length === 1 && cards[0].suit === '♠' && cards[0].num === 3) return {ok:true, type:'single', isSpe3:true};
+        if(gameState.field.length === 1 && gameState.field[0].isJoker) {
+            if(cards.length === 1 && cards[0].suit === '♠' && cards[0].num === 3) return {ok:true, type:'single', isSpe3:true};
+            let rev = (gameState.isRevolution !== gameState.isElevenBack);
+            if(rev) return {ok:false};
+        }
         if(cards.length !== gameState.field.length) return {ok:false};
         if(gameState.lastPlayType !== type) return {ok:false};
+        
+        // 縛り判定
+        if(gameState.isBind) {
+            let fSuits = gameState.field.map(c=>c.suit).sort().join('');
+            let cSuits = cards.map(c=>c.suit).sort().join('');
+            if(type === 'stairs') {
+                 if(gameState.field[0].suit !== cards[0].suit && !gameState.field[0].isJoker && !cards[0].isJoker) return {ok:false};
+            } else if(fSuits !== cSuits) return {ok:false};
+        }
+
         let fieldStr = getStrength(gameState.field, type);
         let myStr = getStrength(cards, type);
         let rev = (gameState.isRevolution !== gameState.isElevenBack);
@@ -283,8 +337,6 @@ function isForbiddenMove(cards, isLastHand) {
     if(!rev && c.num === 2) return true; if(rev && c.num === 3) return true;
     return false;
 }
-
-const PORT = process.env.PORT || 3000; // 環境変数PORTがあればそれを、なければ3000を使う
 
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
