@@ -12,17 +12,17 @@
         .btn-main:active { transform: scale(0.95); }
         .btn-blue { background: #3498db; color: white; }
 
-        /* ホーム画面 */
+        /* 画面レイアウト */
         #home-screen, #setup-screen, #wait-screen { position: absolute; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; }
         .title { color:#f1c40f; font-size: 3rem; margin-bottom: 30px; text-shadow: 2px 2px 0 #000; }
         .input-group { margin-bottom: 15px; text-align: center; }
         .input-box { padding: 10px; font-size: 1.2rem; border-radius: 5px; border: none; text-align: center; width: 250px; }
         .label { display: block; margin-bottom: 5px; color: #ccc; font-size: 0.9rem; }
 
-        /* ゲーム画面 */
+        /* ゲームテーブル */
         #game-table { display: none; position: relative; width: 100%; max-width: 1100px; height: 100%; max-height: 800px; background: radial-gradient(circle at center, #1e5735 0%, #0a2315 100%); border: 4px solid #2c3e50; border-radius: 10px; box-shadow: 0 0 50px rgba(0,0,0,0.9); }
         
-        .info-box { position: absolute; background: rgba(0,0,0,0.7); border: 2px solid #555; padding: 5px 10px; border-radius: 10px; text-align: center; min-width: 80px; transition: all 0.3s; font-size: 0.8rem; }
+        .info-box { position: absolute; background: rgba(0,0,0,0.7); border: 2px solid #555; padding: 5px 10px; border-radius: 10px; text-align: center; min-width: 80px; transition: all 0.3s; font-size: 0.8rem; z-index: 10; }
         .active-turn { border-color: #f1c40f; box-shadow: 0 0 20px rgba(241, 196, 15, 0.6); transform: scale(1.05); }
         
         #area-top { top: 10px; left: 50%; transform: translateX(-50%); }
@@ -30,20 +30,17 @@
         #area-right { top: 40%; right: 5px; transform: translateY(-50%); }
         #area-bottom { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 95%; text-align: center; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 15px; z-index: 20; }
         
-        /* 場札エリアとアニメーション */
+        /* 場札エリア */
         #field-area { position: absolute; top: 45%; left: 50%; transform: translate(-50%, -50%); width: 100%; max-width: 500px; height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; pointer-events: none; }
         
-        @keyframes slideIn {
-            0% { transform: scale(1.5) translateY(50px); opacity: 0; }
-            100% { transform: scale(1) translateY(0); opacity: 1; }
-        }
-        .card-anim { animation: slideIn 0.3s ease-out forwards; }
-
         /* カードデザイン */
-        .card { display: inline-flex; flex-direction: column; justify-content: space-between; width: 45px; height: 65px; background-color: #fff; color: #000; border-radius: 5px; margin: 2px; padding: 2px; font-weight: bold; font-size: 11px; box-shadow: 1px 1px 4px rgba(0,0,0,0.5); cursor: pointer; border: 1px solid #aaa; box-sizing: border-box; pointer-events: auto; user-select: none; }
+        .card { display: inline-flex; flex-direction: column; justify-content: space-between; width: 45px; height: 65px; background-color: #fff; color: #000; border-radius: 5px; margin: 2px; padding: 2px; font-weight: bold; font-size: 11px; box-shadow: 1px 1px 4px rgba(0,0,0,0.5); cursor: pointer; border: 1px solid #aaa; box-sizing: border-box; pointer-events: auto; user-select: none; transition: transform 0.1s; }
         .card.red { color: #d00; }
         .card.selected { transform: translateY(-15px); border: 2px solid #3498db; background-color: #eaf2f8; }
         
+        /* アニメーション用クラス */
+        .card-flying { transition: transform 0.4s ease-out !important; }
+
         #my-hand { display: flex; justify-content: center; flex-wrap: wrap; min-height: 70px; }
         #field-cards { display: flex; justify-content: center; align-items: center; min-height: 70px; width: 100%; }
         
@@ -57,14 +54,13 @@
         .btn-pass { background: #c0392b; color: white; }
         .btn-play:disabled, .btn-pass:disabled { opacity: 0.3; cursor: not-allowed; }
 
-        /* スコアボード（リザルト画面） */
+        /* リザルト画面 */
         #result-screen { display: none; position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.85); z-index: 3000; flex-direction: column; align-items: center; justify-content: center; color: white; }
         table.score-table { border-collapse: collapse; margin: 20px; font-size: 1.1rem; }
         table.score-table th, table.score-table td { border: 1px solid #555; padding: 10px 20px; text-align: center; }
         table.score-table th { background: #333; color: #f1c40f; }
         .result-title { font-size: 2rem; color: #f1c40f; margin-bottom: 10px; }
 
-        /* レスポンシブ調整（スマホ向け） */
         @media (max-width: 600px) {
             .title { font-size: 2rem; }
             .card { width: 38px; height: 56px; font-size: 10px; }
@@ -125,9 +121,7 @@
 
         <div id="area-bottom">
             <div style="margin-bottom:3px; font-size:0.9rem;">
-                <span id="my-name" style="color:#f1c40f; font-weight:bold;"></span> 
-                (<span id="my-score">0</span>pt) 
-                <span id="rnk-bottom"></span>
+                <span id="my-name" style="color:#f1c40f; font-weight:bold;"></span> (<span id="my-score">0</span>pt) <span id="rnk-bottom"></span>
             </div>
             <div id="my-hand"></div>
             <div style="margin-top:5px;">
@@ -157,9 +151,7 @@
         let myName = "";
         let myHand = [];
         let selected = [];
-        
-        // ★修正: アニメーション判定用に「カードのID文字列」を記録するように変更
-        let lastFieldIds = ""; 
+        let lastFieldIds = "";
 
         function goHome() {
             document.getElementById('setup-screen').style.display = 'none';
@@ -170,8 +162,6 @@
             currentMode = mode;
             document.getElementById('home-screen').style.display = 'none';
             document.getElementById('setup-screen').style.display = 'flex';
-            
-            // シングルの場合はルーム入力不要
             if(mode === 'single') {
                 document.getElementById('room-group').style.display = 'none';
                 document.getElementById('setup-title').innerText = "ひとりであそぶ設定";
@@ -190,7 +180,6 @@
             if(currentMode === 'multi' && !room) return alert("合言葉を入力してください");
 
             myName = name;
-            
             document.getElementById('setup-screen').style.display = 'none';
             
             if(currentMode === 'multi') {
@@ -198,11 +187,7 @@
                 document.getElementById('wait-room-display').innerText = "ROOM: " + room;
             }
 
-            socket.emit('joinGame', { 
-                mode: currentMode,
-                name: myName, 
-                roomName: room 
-            });
+            socket.emit('joinGame', { mode: currentMode, name: myName, roomName: room });
         }
 
         socket.on('initInfo', (data) => {
@@ -214,11 +199,7 @@
         socket.on('playerUpdate', (data) => {
             document.getElementById('p-count').innerText = data.count;
             document.getElementById('member-list').innerHTML = data.names.join("<br>");
-            
-            // シングルプレイは即開始されるのでwait画面スキップ
-            if(currentMode === 'single') {
-                document.getElementById('wait-screen').style.display = 'none';
-            }
+            if(currentMode === 'single') document.getElementById('wait-screen').style.display = 'none';
             if(data.count === 4) {
                 document.getElementById('wait-screen').style.display = 'none';
                 document.getElementById('game-table').style.display = 'block';
@@ -226,40 +207,32 @@
         });
 
         socket.on('gameFull', () => {
-            alert("満員かエラーです。ホームに戻ります。");
+            alert("満員かエラーです。");
             location.reload();
         });
 
         socket.on('updateState', (state) => {
-            document.getElementById('result-screen').style.display = 'none'; // リザルト消去
+            document.getElementById('result-screen').style.display = 'none';
             document.getElementById('game-table').style.display = 'block';
-
             myHand = state.myHand;
             renderHand();
-            renderField(state.field); 
+            renderField(state.field, state.lastPlayer); 
             renderInfo(state);
             renderOpponents(state);
         });
 
-        socket.on('msg', (txt) => {
-            document.getElementById('msg-box').innerText = txt;
-        });
+        socket.on('msg', (txt) => document.getElementById('msg-box').innerText = txt);
 
-        // リザルト表示
         socket.on('roundResult', (data) => {
             let tbody = document.getElementById('score-body');
             tbody.innerHTML = "";
-            
-            // スコア順にソート
             let sorted = [...data.results].sort((a,b) => b.score - a.score);
-
             sorted.forEach(res => {
                 let tr = document.createElement('tr');
                 let ptStr = (res.roundPt > 0 ? "+" : "") + res.roundPt;
                 tr.innerHTML = `<td>${res.name}</td><td>${ptStr}</td><td>${res.score}</td>`;
                 tbody.appendChild(tr);
             });
-
             document.getElementById('res-title').innerText = data.isFinal ? "最終結果" : `ラウンド ${data.round} 終了`;
             document.getElementById('result-screen').style.display = 'flex';
         });
@@ -284,22 +257,57 @@
             return d;
         }
 
-        function renderField(cards) {
+        function renderField(cards, lastPlayerIdx) {
             const div = document.getElementById('field-cards');
-            
-            // ★修正: 場にあるカードのID一覧を作って比較
-            // これにより「パス」の時は中身が変わらないのでアニメーションしない
             let currentFieldIds = cards.map(c => c.id).join(',');
             let isNewPlay = (cards.length > 0 && currentFieldIds !== lastFieldIds);
-            
             lastFieldIds = currentFieldIds;
 
             div.innerHTML = "";
+            let els = [];
             cards.forEach(c => {
                 let el = createCardEl(c);
-                if(isNewPlay) el.classList.add('card-anim'); // アニメクラス付与
                 div.appendChild(el);
+                els.push(el);
             });
+
+            // アニメーション処理：新しいプレイで、かつプレイヤーが特定できる場合
+            if(isNewPlay && lastPlayerIdx !== -1) {
+                // 1. スタート位置（プレイヤーの場所）を取得
+                let startRect = getPlayerRect(lastPlayerIdx);
+                // 2. ゴール位置（中央のカード置き場）を取得
+                let fieldRect = div.getBoundingClientRect();
+
+                // 3. 差分計算 (中心座標で合わせる)
+                let startX = (startRect.left + startRect.width/2) - (fieldRect.left + fieldRect.width/2);
+                let startY = (startRect.top + startRect.height/2) - (fieldRect.top + fieldRect.height/2);
+
+                // 4. すべての新しいカードに初期位置を設定
+                els.forEach(el => {
+                    el.style.transform = `translate(${startX}px, ${startY}px)`;
+                    el.style.transition = 'none'; // 一旦アニメなしで移動
+                });
+
+                // 5. 強制再描画させてから、アニメーションで(0,0)へ戻す
+                requestAnimationFrame(() => {
+                    els.forEach(el => {
+                        // 少し遅らせないとtransitionが効かない場合があるため
+                        setTimeout(() => {
+                            el.classList.add('card-flying');
+                            el.style.transform = `translate(0px, 0px)`;
+                        }, 20);
+                    });
+                });
+            }
+        }
+
+        function getPlayerRect(pIdx) {
+            // 自分から見て相対的にどこか
+            // 自分=0, 左=1, 上=2, 右=3 (相対インデックス)
+            let relIdx = (pIdx - myIdx + 4) % 4;
+            let idMap = { 0: 'area-bottom', 1: 'area-left', 2: 'area-top', 3: 'area-right' };
+            let el = document.getElementById(idMap[relIdx]);
+            return el.getBoundingClientRect();
         }
 
         function renderInfo(state) {
@@ -326,7 +334,6 @@
             positions.forEach(pos => {
                 let pName = state.names[pos.idx] || "CPU";
                 let pScore = state.scores[pos.idx] || 0;
-                
                 let el = document.getElementById(pos.id);
                 if(state.turn === pos.idx && !finished.includes(pos.idx)) el.classList.add('active-turn');
                 else el.classList.remove('active-turn');
@@ -335,19 +342,15 @@
                 let wIdx = state.winners.indexOf(pos.idx);
                 if(wIdx >= 0) rnkStr = ["大富豪","富豪","貧民","大貧民"][wIdx];
                 if(state.fouled.includes(pos.idx)) rnkStr = "反則負";
-                
                 let rnkElId = pos.id.replace('area-', 'rnk-');
                 document.getElementById(rnkElId).innerText = rnkStr;
 
                 if(pos.id === 'area-bottom') {
                     document.getElementById('my-score').innerText = pScore;
                 } else {
-                    let cntId = pos.id.replace('area-', 'cnt-');
-                    let nmId = pos.id.replace('area-', 'nm-');
-                    let scId = pos.id.replace('area-', 'sc-');
-                    document.getElementById(cntId).innerText = state.counts[pos.idx];
-                    document.getElementById(nmId).innerText = pName;
-                    document.getElementById(scId).innerText = pScore + "pt";
+                    document.getElementById(pos.id.replace('area-', 'cnt-')).innerText = state.counts[pos.idx];
+                    document.getElementById(pos.id.replace('area-', 'nm-')).innerText = pName;
+                    document.getElementById(pos.id.replace('area-', 'sc-')).innerText = pScore + "pt";
                     el.style.opacity = finished.includes(pos.idx) ? 0.5 : 1;
                 }
             });
