@@ -7,19 +7,16 @@
     <style>
         body { background-color: #05100a; color: #fff; font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; height: 100vh; overflow: hidden; display: flex; justify-content: center; align-items: center; }
         
-        /* 共通ボタン */
         .btn-main { background: #f1c40f; color: black; font-size: 1.2rem; padding: 12px 30px; border-radius: 30px; border: none; cursor: pointer; font-weight: bold; margin: 10px; width: 200px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: transform 0.1s; }
         .btn-main:active { transform: scale(0.95); }
         .btn-blue { background: #3498db; color: white; }
 
-        /* 画面レイアウト */
         #home-screen, #setup-screen, #wait-screen { position: absolute; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; }
         .title { color:#f1c40f; font-size: 3rem; margin-bottom: 30px; text-shadow: 2px 2px 0 #000; }
         .input-group { margin-bottom: 15px; text-align: center; }
         .input-box { padding: 10px; font-size: 1.2rem; border-radius: 5px; border: none; text-align: center; width: 250px; }
         .label { display: block; margin-bottom: 5px; color: #ccc; font-size: 0.9rem; }
 
-        /* ゲームテーブル */
         #game-table { display: none; position: relative; width: 100%; max-width: 1100px; height: 100%; max-height: 800px; background: radial-gradient(circle at center, #1e5735 0%, #0a2315 100%); border: 4px solid #2c3e50; border-radius: 10px; box-shadow: 0 0 50px rgba(0,0,0,0.9); }
         
         .info-box { position: absolute; background: rgba(0,0,0,0.7); border: 2px solid #555; padding: 5px 10px; border-radius: 10px; text-align: center; min-width: 80px; transition: all 0.3s; font-size: 0.8rem; z-index: 10; }
@@ -30,15 +27,12 @@
         #area-right { top: 40%; right: 5px; transform: translateY(-50%); }
         #area-bottom { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 95%; text-align: center; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 15px; z-index: 20; }
         
-        /* 場札エリア */
         #field-area { position: absolute; top: 45%; left: 50%; transform: translate(-50%, -50%); width: 100%; max-width: 500px; height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; pointer-events: none; }
         
-        /* カードデザイン */
         .card { display: inline-flex; flex-direction: column; justify-content: space-between; width: 45px; height: 65px; background-color: #fff; color: #000; border-radius: 5px; margin: 2px; padding: 2px; font-weight: bold; font-size: 11px; box-shadow: 1px 1px 4px rgba(0,0,0,0.5); cursor: pointer; border: 1px solid #aaa; box-sizing: border-box; pointer-events: auto; user-select: none; transition: transform 0.1s; }
         .card.red { color: #d00; }
         .card.selected { transform: translateY(-15px); border: 2px solid #3498db; background-color: #eaf2f8; }
         
-        /* アニメーション用クラス */
         .card-flying { transition: transform 0.4s ease-out !important; }
 
         #my-hand { display: flex; justify-content: center; flex-wrap: wrap; min-height: 70px; }
@@ -48,13 +42,11 @@
         .badge { padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: bold; color: white; display: none; }
         #msg-box { height: 25px; color: #f1c40f; font-weight: bold; font-size: 1rem; text-shadow: 1px 1px 2px black; margin-bottom: 5px; }
         
-        /* 操作ボタン */
         button.game-btn { padding: 8px 15px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; margin: 0 5px; font-size: 0.9rem; }
         .btn-play { background: #27ae60; color: white; }
         .btn-pass { background: #c0392b; color: white; }
         .btn-play:disabled, .btn-pass:disabled { opacity: 0.3; cursor: not-allowed; }
 
-        /* リザルト画面 */
         #result-screen { display: none; position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.85); z-index: 3000; flex-direction: column; align-items: center; justify-content: center; color: white; }
         table.score-table { border-collapse: collapse; margin: 20px; font-size: 1.1rem; }
         table.score-table th, table.score-table td { border: 1px solid #555; padding: 10px 20px; text-align: center; }
@@ -206,10 +198,7 @@
             }
         });
 
-        socket.on('gameFull', () => {
-            alert("満員かエラーです。");
-            location.reload();
-        });
+        socket.on('gameFull', () => { alert("エラー: 満員か再読み込みが必要です"); location.reload(); });
 
         socket.on('updateState', (state) => {
             document.getElementById('result-screen').style.display = 'none';
@@ -263,47 +252,43 @@
             let isNewPlay = (cards.length > 0 && currentFieldIds !== lastFieldIds);
             lastFieldIds = currentFieldIds;
 
-            div.innerHTML = "";
-            let els = [];
-            cards.forEach(c => {
-                let el = createCardEl(c);
-                div.appendChild(el);
-                els.push(el);
-            });
+            // 新しいカードが来たときだけクリアして描画（パスや画面更新時はそのまま）
+            if(cards.length === 0) {
+                 div.innerHTML = ""; // 場が流れたらクリア
+            } else {
+                 div.innerHTML = "";
+                 let els = [];
+                 cards.forEach(c => {
+                    let el = createCardEl(c);
+                    div.appendChild(el);
+                    els.push(el);
+                 });
 
-            // アニメーション処理：新しいプレイで、かつプレイヤーが特定できる場合
-            if(isNewPlay && lastPlayerIdx !== -1) {
-                // 1. スタート位置（プレイヤーの場所）を取得
-                let startRect = getPlayerRect(lastPlayerIdx);
-                // 2. ゴール位置（中央のカード置き場）を取得
-                let fieldRect = div.getBoundingClientRect();
+                 // アニメーション実行
+                 if(isNewPlay && lastPlayerIdx !== -1) {
+                    let startRect = getPlayerRect(lastPlayerIdx);
+                    let fieldRect = div.getBoundingClientRect();
+                    let startX = (startRect.left + startRect.width/2) - (fieldRect.left + fieldRect.width/2);
+                    let startY = (startRect.top + startRect.height/2) - (fieldRect.top + fieldRect.height/2);
 
-                // 3. 差分計算 (中心座標で合わせる)
-                let startX = (startRect.left + startRect.width/2) - (fieldRect.left + fieldRect.width/2);
-                let startY = (startRect.top + startRect.height/2) - (fieldRect.top + fieldRect.height/2);
-
-                // 4. すべての新しいカードに初期位置を設定
-                els.forEach(el => {
-                    el.style.transform = `translate(${startX}px, ${startY}px)`;
-                    el.style.transition = 'none'; // 一旦アニメなしで移動
-                });
-
-                // 5. 強制再描画させてから、アニメーションで(0,0)へ戻す
-                requestAnimationFrame(() => {
                     els.forEach(el => {
-                        // 少し遅らせないとtransitionが効かない場合があるため
-                        setTimeout(() => {
-                            el.classList.add('card-flying');
-                            el.style.transform = `translate(0px, 0px)`;
-                        }, 20);
+                        el.style.transform = `translate(${startX}px, ${startY}px)`;
+                        el.style.transition = 'none';
                     });
-                });
+
+                    requestAnimationFrame(() => {
+                        els.forEach(el => {
+                            setTimeout(() => {
+                                el.classList.add('card-flying');
+                                el.style.transform = `translate(0px, 0px)`;
+                            }, 20);
+                        });
+                    });
+                 }
             }
         }
 
         function getPlayerRect(pIdx) {
-            // 自分から見て相対的にどこか
-            // 自分=0, 左=1, 上=2, 右=3 (相対インデックス)
             let relIdx = (pIdx - myIdx + 4) % 4;
             let idMap = { 0: 'area-bottom', 1: 'area-left', 2: 'area-top', 3: 'area-right' };
             let el = document.getElementById(idMap[relIdx]);
@@ -315,7 +300,7 @@
             document.getElementById('max-round').innerText = state.info.maxRounds;
             document.getElementById('bdg-rev').style.display = state.info.rev ? 'block' : 'none';
             document.getElementById('bdg-11').style.display = state.info.eleven ? 'block' : 'none';
-            document.getElementById('bdg-bind').style.display = state.info.bind ? 'block' : 'none';
+            document.getElementById('bdg-bind').style.display = state.info.bind ? 'block' : 'none'; // 縛り表示
 
             let isMyTurn = (state.turn === myIdx);
             document.getElementById('btn-play').disabled = !isMyTurn;
@@ -342,8 +327,8 @@
                 let wIdx = state.winners.indexOf(pos.idx);
                 if(wIdx >= 0) rnkStr = ["大富豪","富豪","貧民","大貧民"][wIdx];
                 if(state.fouled.includes(pos.idx)) rnkStr = "反則負";
-                let rnkElId = pos.id.replace('area-', 'rnk-');
-                document.getElementById(rnkElId).innerText = rnkStr;
+                
+                document.getElementById(pos.id.replace('area-', 'rnk-')).innerText = rnkStr;
 
                 if(pos.id === 'area-bottom') {
                     document.getElementById('my-score').innerText = pScore;
