@@ -43,7 +43,7 @@ function createInitialState() {
         isElevenBack: false,
         isBind: false,
         lastPlayType: "single",
-        lastPlayer: -1, // 最後に誰が出したか
+        lastPlayer: -1, 
         gameover: false
     };
 }
@@ -120,7 +120,7 @@ io.on('connection', (socket) => {
                     delete rooms[roomName];
                 } else {
                     room.gameState = createInitialState();
-                    broadcastToRoom(roomName, 'msg', "切断がありました。リロード推奨。");
+                    broadcastToRoom(roomName, 'msg', "切断発生。リロード推奨。");
                     broadcastToRoom(roomName, 'gameFull');
                 }
             } else {
@@ -190,60 +190,125 @@ function broadcastState(room) {
             },
             winners: room.gameState.winners,
             fouled: room.gameState.fouled,
-            lastPlayer: room.gameState.lastPlayer // ★追加: アニメーション用
+            lastPlayer: room.gameState.lastPlayer
         });
     });
 }
 
-/* --- ボットロジック --- */
+/* --- ボットロジック (改良版: 賢く温存する) --- */
 function checkBotTurn(room) {
     let gs = room.gameState;
     let pIdx = gs.turn;
     let player = room.players[pIdx];
+    
+    // すでに上がってる、またはBotでないなら無視
+    let finished = [...gs.winners, ...gs.fouled];
+    if (finished.includes(pIdx) || !player.isBot) return;
 
-    if ([...gs.winners, ...gs.fouled].includes(pIdx) || !player.isBot) return;
+    // フリーズ防止: 万が一存在しないルームなら終了
+    if (!rooms[room.id]) return;
 
     setTimeout(() => {
-        if(!rooms[room.id]) return;
-        botPlay(room, pIdx);
+        try {
+            botPlaySmart(room, pIdx);
+        } catch(e) {
+            console.error("Bot Error:", e);
+            // エラー時はとりあえずパスさせる（進行停止を防ぐ）
+            processPass(room, pIdx);
+        }
     }, 1000);
 }
 
-function botPlay(room, pIdx) {
+function botPlaySmart(room, pIdx) {
     let player = room.players[pIdx];
     let hand = player.hand;
     let gs = room.gameState;
-    let playable = null;
-    let playType = "";
+    
+    let candidates = []; // 出せる手の候補リスト
 
-    // ペア
-    let groups = {};
-    hand.forEach(c => {
-        if(c.isJoker) return;
-        if(!groups[c.num]) groups[c.num] = [];
-        groups[c.num].push(c);
-    });
-    for(let num in groups) {
-        if(groups[num].length >= 2) {
-            let res = checkRules(groups[num], gs);
-            if(res.ok) { playable = groups[num]; playType = res.type; break; }
+    // 1. 候補を探す
+    if (gs.field.length === 0) {
+        // --- 場が空（親）の場合 ---
+        // ペア出しできるものを探す
+        let groups = {};
+        hand.forEach(c => {
+            if (c.isJoker) return;
+            if (!groups[c.num]) groups[c.num] = [];
+            groups[c.num].push(c);
+        });
+        
+        // ペアを候補に追加
+        for (let num in groups) {
+            if (groups[num].length >= 2) {
+                candidates.push({ cards: groups[num], type: 'pair', str: groups[num][0].str });
+            }
+        }
+        // 単騎を候補に追加（ジョーカー含む）
+        hand.forEach(c => {
+            candidates.push({ cards: [c], type: 'single', str: (c.isJoker ? 14 : c.str) });
+        });
+
+    } else {
+        // --- 場にカードがある場合（子）---
+        // 現在の場に勝てるものだけを探す
+        
+        // 単騎の場合
+        if (gs.lastPlayType === 'single') {
+            hand.forEach(c => {
+                let testCards = [c];
+                let check = checkRules(testCards, gs);
+                if (check.ok) {
+                    candidates.push({ cards: testCards, type: 'single', str: (c.isJoker ? 14 : c.str) });
+                }
+            });
+        }
+        // ペアの場合
+        else if (gs.lastPlayType === 'pair') {
+            let groups = {};
+            hand.forEach(c => {
+                if (c.isJoker) return;
+                if (!groups[c.num]) groups[c.num] = [];
+                groups[c.num].push(c);
+            });
+            for (let num in groups) {
+                // 場の枚数と一致するか確認（大富豪は枚数縛り厳密）
+                if (groups[num].length === gs.field.length) {
+                    let check = checkRules(groups[num], gs);
+                    if (check.ok) {
+                        candidates.push({ cards: groups[num], type: 'pair', str: groups[num][0].str });
+                    }
+                }
+            }
+        }
+        // 階段などは複雑なので今回は「出せればパスしない」程度の簡易対応
+        else if (gs.lastPlayType === 'stairs') {
+            // 実装簡略化のため、階段は「パス」傾向にする（Botの階段実装は複雑なため）
         }
     }
-    // 単騎
-    if(!playable) {
-        for(let c of hand) {
-            let cards = [c];
-            let res = checkRules(cards, gs);
-            if(res.ok) { playable = cards; playType = res.type; break; }
+
+    // 2. 賢く選ぶ（弱い順にソートして一番弱いのを出す）
+    if (candidates.length > 0) {
+        // 強さ(str)で昇順ソート
+        // 革命時は逆順にすべきだが、簡易的に「通常時は弱い方から、革命時は強い方から」
+        if (!gs.isRevolution) {
+            candidates.sort((a, b) => a.str - b.str); // 弱い順
+        } else {
+            candidates.sort((a, b) => b.str - a.str); // 強い順
         }
+
+        // 一番手前の候補（＝出せる中で一番弱いカード）を出す
+        let bestMove = candidates[0];
+        processPlay(room, pIdx, bestMove.cards, bestMove.type);
+    } else {
+        processPass(room, pIdx);
     }
-    if(playable) processPlay(room, pIdx, playable, playType);
-    else processPass(room, pIdx);
 }
 
-/* --- ゲーム進行 --- */
+/* --- ゲーム進行処理 --- */
 function processPlay(room, pIdx, cards, type) {
     let gs = room.gameState;
+    
+    // カード移動処理
     gs.field = cards;
     gs.lastPlayType = type;
     gs.lastPlayer = pIdx;
@@ -251,18 +316,34 @@ function processPlay(room, pIdx, cards, type) {
     room.players[pIdx].hand = room.players[pIdx].hand.filter(c => !cards.some(target => target.id === c.id));
 
     let msg = "";
+    // あがり判定
     if (room.players[pIdx].hand.length === 0) {
         gs.winners.push(pIdx);
         msg = `${room.players[pIdx].name} あがり！`;
     } else {
+         // 特殊効果
          if (cards.length >= 4) { gs.isRevolution = !gs.isRevolution; msg = "革命！"; }
          if (cards.some(c => c.num === 8) && type !== 'stairs') { msg = "8切り！"; resetField(gs); gs.turn = pIdx; }
          if (cards.some(c => c.num === 11) && type !== 'stairs') { gs.isElevenBack = true; msg = "11バック！"; }
     }
     if(msg) broadcastToRoom(room.id, 'msg', msg);
 
-    if (!(cards.some(c => c.num === 8) && type !== 'stairs') && room.players[pIdx].hand.length > 0) nextTurn(gs);
-    else if (room.players[pIdx].hand.length === 0) nextTurn(gs);
+    // 次のターンへ（8切りでなく、あがった直後でもない場合、またはあがった場合も次は他人）
+    let isEight = (cards.some(c => c.num === 8) && type !== 'stairs');
+    
+    // 8切りの場合: ターンは今の人のまま。ただしその人があがっていたら、次の人へ回す
+    if (isEight) {
+        if (room.players[pIdx].hand.length === 0) {
+            nextTurn(gs); // あがったので親権放棄して次へ
+        } else {
+            // あがってなければ俺のターン（親）
+            resetField(gs);
+            gs.turn = pIdx; 
+        }
+    } else {
+        // 通常進行
+        nextTurn(gs);
+    }
     
     checkGameEnd(room);
     broadcastState(room);
@@ -273,16 +354,23 @@ function processPass(room, pIdx) {
     let gs = room.gameState;
     if (!gs.passed.includes(pIdx)) gs.passed.push(pIdx);
     
-    let active = 4 - gs.winners.length - gs.fouled.length;
-    if (active <= 1) { checkGameEnd(room); return; }
+    let activePlayers = 4 - gs.winners.length - gs.fouled.length;
+    if (activePlayers <= 1) { checkGameEnd(room); return; }
 
-    if (gs.passed.length >= active - 1) {
+    // 全員パスしたか？
+    if (gs.passed.length >= activePlayers - 1) {
         broadcastToRoom(room.id, 'msg', "場が流れました");
         resetField(gs);
+        
+        // ★修正ポイント: 場を流した人が親になるが、その人が既にあがっている場合は次の人へ
         gs.turn = gs.lastPlayer;
-        let loop=0;
-        let allFinished = [...gs.winners, ...gs.fouled];
-        while(allFinished.includes(gs.turn) && loop<10){ gs.turn = (gs.turn + 1) % 4; loop++; }
+        let finished = [...gs.winners, ...gs.fouled];
+        
+        // もし親になるべき人があがっていたら、次の有効なプレイヤーを探す
+        if (finished.includes(gs.turn)) {
+            nextTurn(gs);
+        }
+        // 親なのでパス情報はリセット済み
     } else {
         nextTurn(gs);
     }
@@ -292,8 +380,12 @@ function processPass(room, pIdx) {
 
 function nextTurn(gs) {
     let loop = 0;
-    let allFinished = [...gs.winners, ...gs.fouled];
-    do { gs.turn = (gs.turn + 1) % 4; loop++; } while (allFinished.includes(gs.turn) && loop < 10);
+    let finished = [...gs.winners, ...gs.fouled];
+    // 次の人へ回す。あがっている人は飛ばす。
+    do { 
+        gs.turn = (gs.turn + 1) % 4; 
+        loop++; 
+    } while (finished.includes(gs.turn) && loop < 10);
 }
 
 function resetField(gs) {
@@ -308,7 +400,9 @@ function resetField(gs) {
 function checkGameEnd(room) {
     let gs = room.gameState;
     let finishedCount = gs.winners.length + gs.fouled.length;
+    
     if (finishedCount >= 3) {
+        // 残り1人を勝者リストへ
         for(let i=0; i<4; i++) {
             if(!gs.winners.includes(i) && !gs.fouled.includes(i)) gs.winners.push(i);
         }
@@ -324,18 +418,23 @@ function checkGameEnd(room) {
         broadcastToRoom(room.id, 'roundResult', { results: resultData, round: gs.round, isFinal: gs.round >= MAX_ROUNDS });
 
         if (gs.round < MAX_ROUNDS) {
-            gs.round++;
+            gs.round++; // 先にインクリメント
             setTimeout(() => {
                 let r = rooms[room.id];
                 if(r) {
-                    let nextGs = createInitialState();
-                    nextGs.round = gs.round; // 新しいラウンド番号を引き継ぐ
-                    r.gameState = nextGs;
+                    // 次のラウンドの初期化
+                    let nextRoundNum = gs.round;
+                    r.gameState = createInitialState();
+                    r.gameState.round = nextRoundNum;
+                    
                     let deck = createDeck();
-                    r.players.forEach(p=>p.hand = []);
+                    r.players.forEach(p => p.hand = []);
                     deck.forEach((c, i) => r.players[i % 4].hand.push(c));
                     r.players.forEach(p => sortHand(p.hand));
+                    
+                    // ターン決め（本来は大貧民からだがランダム）
                     r.gameState.turn = Math.floor(Math.random() * 4);
+                    
                     broadcastState(r);
                     checkBotTurn(r);
                 }
@@ -355,6 +454,7 @@ function checkRules(cards, gs) {
     let isPair = false;
     if(normals.length > 0) { if(normals.every(c => c.num === normals[0].num)) isPair = true; } else isPair = true;
 
+    // 階段判定(簡易版)
     let isStairs = false;
     if(cards.length >= 3) {
         let baseSuit = normals.length > 0 ? normals[0].suit : null;
@@ -380,10 +480,12 @@ function checkRules(cards, gs) {
     if(isStairs) type = "stairs"; else if(isPair) type = (cards.length === 1) ? "single" : "pair"; else return {ok:false};
 
     if(gs.field.length > 0) {
+        // 縛り、革命、強さ判定
         if(gs.field.length === 1 && gs.field[0].isJoker) {
             if(cards.length === 1 && cards[0].suit === '♠' && cards[0].num === 3) return {ok:true, type:'single', isSpe3:true};
+            // ジョーカーには通常勝てない（スペ3以外）
             let rev = (gs.isRevolution !== gs.isElevenBack);
-            if(rev) return {ok:false};
+            if(rev) return {ok:false}; 
         }
         if(cards.length !== gs.field.length) return {ok:false};
         if(gs.lastPlayType !== type) return {ok:false};
@@ -399,7 +501,10 @@ function checkRules(cards, gs) {
         let fieldStr = getStrength(gs.field, type);
         let myStr = getStrength(cards, type);
         let rev = (gs.isRevolution !== gs.isElevenBack);
-        if(rev) { if(myStr >= fieldStr) return {ok:false}; } else { if(myStr <= fieldStr) return {ok:false}; }
+        
+        // 革命時は弱いほうが強い
+        if(rev) { if(myStr >= fieldStr) return {ok:false}; } 
+        else { if(myStr <= fieldStr) return {ok:false}; }
     }
     return {ok:true, type:type};
 }
