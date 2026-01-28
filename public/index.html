@@ -157,7 +157,9 @@
         let myName = "";
         let myHand = [];
         let selected = [];
-        let lastFieldLength = 0; // アニメーション判定用
+        
+        // ★修正: アニメーション判定用に「カードのID文字列」を記録するように変更
+        let lastFieldIds = ""; 
 
         function goHome() {
             document.getElementById('setup-screen').style.display = 'none';
@@ -234,7 +236,7 @@
 
             myHand = state.myHand;
             renderHand();
-            renderField(state.field, state.lastPlayType); // アニメ用引数追加
+            renderField(state.field); 
             renderInfo(state);
             renderOpponents(state);
         });
@@ -282,12 +284,15 @@
             return d;
         }
 
-        function renderField(cards, playType) {
+        function renderField(cards) {
             const div = document.getElementById('field-cards');
             
-            // 場がリセットされたか、カードが増えたかを判定
-            let isNewPlay = (cards.length > 0 && (cards.length !== lastFieldLength || playType !== 'pass'));
-            lastFieldLength = cards.length;
+            // ★修正: 場にあるカードのID一覧を作って比較
+            // これにより「パス」の時は中身が変わらないのでアニメーションしない
+            let currentFieldIds = cards.map(c => c.id).join(',');
+            let isNewPlay = (cards.length > 0 && currentFieldIds !== lastFieldIds);
+            
+            lastFieldIds = currentFieldIds;
 
             div.innerHTML = "";
             cards.forEach(c => {
