@@ -64,7 +64,8 @@ io.on('connection', (socket) => {
             rooms[roomName] = {
                 players: [],
                 gameState: createInitialState(),
-                mode: 'single'
+                mode: 'single',
+                id: roomName // IDを明示的にセット
             };
             // 自分を追加
             joinRoom(socket, roomName, name, false);
@@ -89,7 +90,8 @@ io.on('connection', (socket) => {
                 rooms[roomName] = {
                     players: [],
                     gameState: createInitialState(),
-                    mode: 'multi'
+                    mode: 'multi',
+                    id: roomName
                 };
             }
             let room = rooms[roomName];
@@ -155,6 +157,9 @@ io.on('connection', (socket) => {
 /* --- 共通処理 --- */
 function joinRoom(socket, roomName, name, isBot) {
     let room = rooms[roomName];
+    // room.idがなければセット（念のため）
+    if(!room.id) room.id = roomName;
+
     socket.join(roomName);
     socket.data.roomName = roomName;
     socket.data.name = name;
@@ -194,7 +199,6 @@ function startGame(roomName) {
     room.players.forEach(p => sortHand(p.hand));
     
     // 最初の親はランダム、2R以降は大貧民スタートなどが一般的だが今回はランダム簡略化
-    // もし前回順位があればそれを考慮する実装も可能
     room.gameState.turn = Math.floor(Math.random() * 4);
     
     broadcastState(room);
@@ -236,7 +240,7 @@ function broadcastState(room) {
     });
 }
 
-/* --- ボットロジック --- */
+/* --- ボットロジック（修正済） --- */
 function checkBotTurn(room) {
     let gs = room.gameState;
     let pIdx = gs.turn;
@@ -247,8 +251,8 @@ function checkBotTurn(room) {
 
     // 少し考えてから行動（1秒後）
     setTimeout(() => {
-        // 部屋が消えてたら終了
-        if(!rooms[room.players[0]?.id] && room.mode === 'single') return; // 簡易チェック
+        // ★修正: room.idで部屋の存在確認
+        if(!rooms[room.id]) return;
         
         botPlay(room, pIdx);
     }, 1000);
@@ -264,7 +268,6 @@ function botPlay(room, pIdx) {
     let playType = "";
 
     // 1. ペア出しの可能性を探る
-    // 同じ数字をまとめる
     let groups = {};
     hand.forEach(c => {
         if(c.isJoker) return;
@@ -314,9 +317,6 @@ function processPlay(room, pIdx, cards, type) {
     if (room.players[pIdx].hand.length === 0) {
         gs.winners.push(pIdx);
         msg = `${room.players[pIdx].name} あがり！`;
-        
-        // 得点計算（仮）: あがった順に順位確定
-        // 最終的な計算はラウンド終了時に行う
     } else {
          // 特殊効果チェック（革命など）
          if (cards.length >= 4) { gs.isRevolution = !gs.isRevolution; msg = "革命！"; }
@@ -324,7 +324,7 @@ function processPlay(room, pIdx, cards, type) {
          if (cards.some(c => c.num === 11) && type !== 'stairs') { gs.isElevenBack = true; msg = "11バック！"; }
     }
 
-    if(msg) broadcastToRoom(socketOrRoomName(room), 'msg', msg);
+    if(msg) broadcastToRoom(room.id, 'msg', msg);
 
     // 8切りや反則でない限りターン送り
     if (!(cards.some(c => c.num === 8) && type !== 'stairs') && room.players[pIdx].hand.length > 0) {
@@ -347,10 +347,9 @@ function processPass(room, pIdx) {
     if (active <= 1) { checkGameEnd(room); return; }
 
     if (gs.passed.length >= active - 1) {
-        broadcastToRoom(socketOrRoomName(room), 'msg', "場が流れました");
+        broadcastToRoom(room.id, 'msg', "場が流れました");
         resetField(gs);
         gs.turn = gs.lastPlayer;
-        // あがった人の番ならスキップ
         let loop=0;
         let allFinished = [...gs.winners, ...gs.fouled];
         while(allFinished.includes(gs.turn) && loop<10){
@@ -380,22 +379,6 @@ function resetField(gs) {
     gs.isElevenBack = false;
 }
 
-function socketOrRoomName(room) {
-    // 便宜上、マルチならroomName文字列、シングルならその部屋IDを返すヘルパーが必要だが
-    // 今回はio.to(roomName)で統一するために、roomオブジェクト生成時にキーとして使った名前が必要。
-    // roomオブジェクトに自分のキーを持たせるのが早い。
-    // joinGameで修正できないため、逆引きするか、broadcastToRoomを修正。
-    // 手っ取り早く、以下で対応
-    // マルチのroomNameはキーそのもの。
-    // プレイヤーのsocket.data.roomNameを参照するのが一番安全。
-    // ここでは「全員に送る」処理なので、broadcastToRoomにキーを渡す運用にする。
-    
-    // ※コード簡略化のため、broadcastToRoomの呼び出し元で正しいroomNameを渡している前提にします。
-    // processPlay等はroomオブジェクトしか受け取っていないため、
-    // room.id = roomName をjoin時に仕込む修正を行います。
-    return room.id;
-}
-
 function checkGameEnd(room) {
     let gs = room.gameState;
     let finishedCount = gs.winners.length + gs.fouled.length;
@@ -409,17 +392,15 @@ function checkGameEnd(room) {
         }
         
         // ポイント計算
-        // winners[0]=大富豪, [1]=富豪, [2]=貧民, [3]=大貧民
         gs.winners.forEach((pIdx, rank) => {
             room.players[pIdx].score += SCORES[rank];
         });
 
         // スコア表配信用データ
         let resultData = room.players.map((p, i) => {
-            // 今回の順位を探す
             let rank = gs.winners.indexOf(i);
             let pt = (rank >= 0) ? SCORES[rank] : 0;
-            if(gs.fouled.includes(i)) pt = -2; // 反則は最下位扱い
+            if(gs.fouled.includes(i)) pt = -2;
             return { name: p.name, score: p.score, roundPt: pt };
         });
 
@@ -433,22 +414,18 @@ function checkGameEnd(room) {
             gs.round++;
             setTimeout(() => {
                 let currentRound = gs.round;
-                // 次のラウンド開始（room.idを使って）
                 let r = rooms[room.id];
                 if(r) {
-                    // gameStateをリセットしつつラウンド数は維持
                     let nextGs = createInitialState();
                     nextGs.round = currentRound;
                     r.gameState = nextGs;
                     
                     let deck = createDeck();
-                    deck.forEach((c, i) => { r.players[i % 4].hand = []; r.players[i % 4].hand.push(c); }); // 手札リセットして追加
-                    // ※pushだと前回の残りが入るバグ回避のため一度空にする
                     r.players.forEach(p=>p.hand = []);
                     deck.forEach((c, i) => r.players[i % 4].hand.push(c));
                     
                     r.players.forEach(p => sortHand(p.hand));
-                    r.gameState.turn = Math.floor(Math.random() * 4); // 親決め（本来は大富豪から）
+                    r.gameState.turn = Math.floor(Math.random() * 4);
                     
                     broadcastState(r);
                     checkBotTurn(r);
@@ -460,7 +437,7 @@ function checkGameEnd(room) {
     }
 }
 
-/* --- ルール判定(変更なし) --- */
+/* --- ルール判定 --- */
 function checkRules(cards, gs) {
     if(cards.length === 0) return {ok:false};
     let type = "unknown";
@@ -523,13 +500,6 @@ function getStrength(cards, type) {
     if(cards.length===1 && cards[0].isJoker) return 14;
     if(type === 'stairs') { let sorted = [...cards].sort((a,b) => a.str - b.str); return sorted[0].str; }
     let n = cards.find(c=>!c.isJoker); return n ? n.str : 13;
-}
-
-// joinGameの修正に伴い、room.idをセットする処理を追加
-const _originJoin = joinRoom;
-joinRoom = function(socket, roomName, name, isBot) {
-    if(rooms[roomName]) rooms[roomName].id = roomName; // IDセット
-    _originJoin(socket, roomName, name, isBot);
 }
 
 server.listen(PORT, () => {
