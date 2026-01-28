@@ -2,77 +2,116 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Online Daifugo</title>
     <style>
         body { background-color: #05100a; color: #fff; font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; height: 100vh; overflow: hidden; display: flex; justify-content: center; align-items: center; }
         
+        /* 共通ボタン */
+        .btn-main { background: #f1c40f; color: black; font-size: 1.2rem; padding: 12px 30px; border-radius: 30px; border: none; cursor: pointer; font-weight: bold; margin: 10px; width: 200px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); transition: transform 0.1s; }
+        .btn-main:active { transform: scale(0.95); }
+        .btn-blue { background: #3498db; color: white; }
+
+        /* ホーム画面 */
+        #home-screen, #setup-screen, #wait-screen { position: absolute; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; }
+        .title { color:#f1c40f; font-size: 3rem; margin-bottom: 30px; text-shadow: 2px 2px 0 #000; }
+        .input-group { margin-bottom: 15px; text-align: center; }
+        .input-box { padding: 10px; font-size: 1.2rem; border-radius: 5px; border: none; text-align: center; width: 250px; }
+        .label { display: block; margin-bottom: 5px; color: #ccc; font-size: 0.9rem; }
+
+        /* ゲーム画面 */
         #game-table { display: none; position: relative; width: 100%; max-width: 1100px; height: 100%; max-height: 800px; background: radial-gradient(circle at center, #1e5735 0%, #0a2315 100%); border: 4px solid #2c3e50; border-radius: 10px; box-shadow: 0 0 50px rgba(0,0,0,0.9); }
-        .info-box { position: absolute; background: rgba(0,0,0,0.7); border: 2px solid #555; padding: 5px 10px; border-radius: 10px; text-align: center; min-width: 100px; transition: all 0.3s; font-size: 0.9rem; }
+        
+        .info-box { position: absolute; background: rgba(0,0,0,0.7); border: 2px solid #555; padding: 5px 10px; border-radius: 10px; text-align: center; min-width: 80px; transition: all 0.3s; font-size: 0.8rem; }
         .active-turn { border-color: #f1c40f; box-shadow: 0 0 20px rgba(241, 196, 15, 0.6); transform: scale(1.05); }
         
-        #area-top { top: 15px; left: 50%; transform: translateX(-50%); }
-        #area-left { top: 40%; left: 10px; transform: translateY(-50%); }
-        #area-right { top: 40%; right: 10px; transform: translateY(-50%); }
-        #area-bottom { position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%); width: 90%; text-align: center; background: rgba(0,0,0,0.4); padding: 10px; border-radius: 15px; z-index: 20; }
+        #area-top { top: 10px; left: 50%; transform: translateX(-50%); }
+        #area-left { top: 40%; left: 5px; transform: translateY(-50%); }
+        #area-right { top: 40%; right: 5px; transform: translateY(-50%); }
+        #area-bottom { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); width: 95%; text-align: center; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 15px; z-index: 20; }
         
+        /* 場札エリアとアニメーション */
         #field-area { position: absolute; top: 45%; left: 50%; transform: translate(-50%, -50%); width: 100%; max-width: 500px; height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; pointer-events: none; }
-        .card { display: inline-flex; flex-direction: column; justify-content: space-between; width: 50px; height: 75px; background-color: #fff; color: #000; border-radius: 5px; margin: 2px; padding: 2px; font-weight: bold; font-size: 12px; box-shadow: 1px 1px 4px rgba(0,0,0,0.5); cursor: pointer; border: 1px solid #aaa; box-sizing: border-box; pointer-events: auto; }
+        
+        @keyframes slideIn {
+            0% { transform: scale(1.5) translateY(50px); opacity: 0; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+        }
+        .card-anim { animation: slideIn 0.3s ease-out forwards; }
+
+        /* カードデザイン */
+        .card { display: inline-flex; flex-direction: column; justify-content: space-between; width: 45px; height: 65px; background-color: #fff; color: #000; border-radius: 5px; margin: 2px; padding: 2px; font-weight: bold; font-size: 11px; box-shadow: 1px 1px 4px rgba(0,0,0,0.5); cursor: pointer; border: 1px solid #aaa; box-sizing: border-box; pointer-events: auto; user-select: none; }
         .card.red { color: #d00; }
         .card.selected { transform: translateY(-15px); border: 2px solid #3498db; background-color: #eaf2f8; }
-        #my-hand { display: flex; justify-content: center; flex-wrap: wrap; min-height: 80px; }
-        #field-cards { display: flex; justify-content: center; align-items: center; min-height: 80px; width: 100%; }
-        .badges { display: flex; gap: 5px; margin-bottom: 5px; height: 20px; }
-        .badge { padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; color: white; display: none; }
-        #msg-box { height: 25px; color: #f1c40f; font-weight: bold; font-size: 1.1rem; text-shadow: 1px 1px 2px black; margin-bottom: 5px; }
         
-        button { padding: 8px 20px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; margin: 0 5px; font-size: 0.9rem; }
+        #my-hand { display: flex; justify-content: center; flex-wrap: wrap; min-height: 70px; }
+        #field-cards { display: flex; justify-content: center; align-items: center; min-height: 70px; width: 100%; }
+        
+        .badges { display: flex; gap: 5px; margin-bottom: 5px; height: 20px; }
+        .badge { padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: bold; color: white; display: none; }
+        #msg-box { height: 25px; color: #f1c40f; font-weight: bold; font-size: 1rem; text-shadow: 1px 1px 2px black; margin-bottom: 5px; }
+        
+        /* 操作ボタン */
+        button.game-btn { padding: 8px 15px; border-radius: 20px; border: none; font-weight: bold; cursor: pointer; margin: 0 5px; font-size: 0.9rem; }
         .btn-play { background: #27ae60; color: white; }
         .btn-pass { background: #c0392b; color: white; }
         .btn-play:disabled, .btn-pass:disabled { opacity: 0.3; cursor: not-allowed; }
 
-        /* 入力画面 */
-        #login-screen, #wait-screen { position: absolute; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:2000; display:flex; flex-direction:column; align-items:center; justify-content:center; color:white; }
-        .input-group { margin-bottom: 15px; text-align: center; }
-        .input-box { padding: 10px; font-size: 1.2rem; border-radius: 5px; border: none; text-align: center; width: 250px; }
-        .label { display: block; margin-bottom: 5px; color: #ccc; font-size: 0.9rem; }
-        .btn-start { background: #f1c40f; color: black; font-size: 1.5rem; padding: 10px 40px; border-radius: 30px; border: none; cursor: pointer; font-weight: bold; margin-top: 10px; }
-        .member-list { margin-top: 20px; color: #aaa; text-align: center; line-height: 1.6; }
+        /* スコアボード（リザルト画面） */
+        #result-screen { display: none; position: absolute; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.85); z-index: 3000; flex-direction: column; align-items: center; justify-content: center; color: white; }
+        table.score-table { border-collapse: collapse; margin: 20px; font-size: 1.1rem; }
+        table.score-table th, table.score-table td { border: 1px solid #555; padding: 10px 20px; text-align: center; }
+        table.score-table th { background: #333; color: #f1c40f; }
+        .result-title { font-size: 2rem; color: #f1c40f; margin-bottom: 10px; }
+
+        /* レスポンシブ調整（スマホ向け） */
+        @media (max-width: 600px) {
+            .title { font-size: 2rem; }
+            .card { width: 38px; height: 56px; font-size: 10px; }
+            #my-hand { overflow-x: auto; flex-wrap: nowrap; justify-content: flex-start; padding-bottom: 5px; }
+            #area-bottom { width: 100%; bottom: 0; border-radius: 0; }
+        }
     </style>
 </head>
 <body>
-    <div id="login-screen">
-        <h1 style="color:#f1c40f; font-size: 3rem; margin-bottom: 30px;">大富豪 極</h1>
-        
+    <div id="home-screen">
+        <div class="title">大富豪 極</div>
+        <button class="btn-main" onclick="showSetup('single')">ひとりであそぶ</button>
+        <button class="btn-main btn-blue" onclick="showSetup('multi')">みんなであそぶ</button>
+    </div>
+
+    <div id="setup-screen" style="display:none;">
+        <h2 id="setup-title">設定</h2>
         <div class="input-group">
-            <span class="label">プレイヤー名</span>
-            <input type="text" id="name-input" class="input-box" placeholder="名前 (10文字以内)" maxlength="10">
+            <span class="label">名前</span>
+            <input type="text" id="name-input" class="input-box" placeholder="あなたの名前" maxlength="10">
         </div>
-        
-        <div class="input-group">
+        <div class="input-group" id="room-group">
             <span class="label">合言葉 (ルームID)</span>
             <input type="text" id="room-input" class="input-box" placeholder="例: room1" maxlength="15">
         </div>
-
-        <button class="btn-start" onclick="joinGame()">参加する</button>
+        <div style="margin-top:20px;">
+            <button class="btn-main" onclick="joinGame()">スタート</button>
+            <button class="btn-main btn-pass" onclick="goHome()">戻る</button>
+        </div>
     </div>
 
     <div id="wait-screen" style="display:none;">
-        <h1>マッチング中...</h1>
-        <p style="color:#f1c40f; font-weight:bold;">ROOM: <span id="disp-room-name"></span></p>
-        <p id="wait-msg">他のプレイヤーを待っています (<span id="p-count">0</span>/4)</p>
-        <div class="member-list" id="member-list"></div>
+        <h2>マッチング中...</h2>
+        <p id="wait-room-display"></p>
+        <p>参加者: <span id="p-count">0</span>/4</p>
+        <div id="member-list" style="color:#aaa; margin-top:10px;"></div>
     </div>
 
     <div id="game-table">
-        <div style="position:absolute; top:10px; right:15px; text-align:right; z-index:100; font-size:0.8rem;">
+        <div style="position:absolute; top:5px; right:10px; text-align:right; z-index:100; font-size:0.7rem;">
             ROOM: <span id="game-room-name" style="color:#f1c40f"></span><br>
-            ROUND: <span id="round-num">1</span>
+            ROUND: <span id="round-num">1</span> / <span id="max-round">5</span>
         </div>
 
-        <div id="area-top" class="info-box"><span id="nm-top"></span><br><span id="cnt-top">0</span>枚<br><span id="rnk-top" style="color:#f1c40f"></span></div>
-        <div id="area-left" class="info-box"><span id="nm-left"></span><br><span id="cnt-left">0</span>枚<br><span id="rnk-left" style="color:#f1c40f"></span></div>
-        <div id="area-right" class="info-box"><span id="nm-right"></span><br><span id="cnt-right">0</span>枚<br><span id="rnk-right" style="color:#f1c40f"></span></div>
+        <div id="area-top" class="info-box"><span id="nm-top"></span><br><span id="cnt-top">0</span>枚<br><span id="sc-top">0pt</span><br><span id="rnk-top" style="color:#f1c40f"></span></div>
+        <div id="area-left" class="info-box"><span id="nm-left"></span><br><span id="cnt-left">0</span>枚<br><span id="sc-left">0pt</span><br><span id="rnk-left" style="color:#f1c40f"></span></div>
+        <div id="area-right" class="info-box"><span id="nm-right"></span><br><span id="cnt-right">0</span>枚<br><span id="sc-right">0pt</span><br><span id="rnk-right" style="color:#f1c40f"></span></div>
 
         <div id="field-area">
             <div id="msg-box"></div>
@@ -85,13 +124,26 @@
         </div>
 
         <div id="area-bottom">
-            <div style="margin-bottom:5px;">あなた: <span id="my-name" style="color:#f1c40f; font-weight:bold;"></span> <span id="rnk-bottom"></span></div>
+            <div style="margin-bottom:3px; font-size:0.9rem;">
+                <span id="my-name" style="color:#f1c40f; font-weight:bold;"></span> 
+                (<span id="my-score">0</span>pt) 
+                <span id="rnk-bottom"></span>
+            </div>
             <div id="my-hand"></div>
-            <div style="margin-top:10px;">
-                <button class="btn-play" id="btn-play" onclick="userPlay()">出す</button>
-                <button class="btn-pass" id="btn-pass" onclick="userPass()">パス</button>
+            <div style="margin-top:5px;">
+                <button class="game-btn btn-play" id="btn-play" onclick="userPlay()">出す</button>
+                <button class="game-btn btn-pass" id="btn-pass" onclick="userPass()">パス</button>
             </div>
         </div>
+    </div>
+
+    <div id="result-screen">
+        <div class="result-title" id="res-title">ラウンド終了</div>
+        <table class="score-table">
+            <thead><tr><th>名前</th><th>獲得</th><th>累計</th></tr></thead>
+            <tbody id="score-body"></tbody>
+        </table>
+        <p style="margin-top:20px; font-size:0.9rem;">(次は自動で始まります)</p>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -100,41 +152,71 @@
         const SUITS = ['♠', '♥', '♦', '♣'];
         const DISPLAYS = { 1:'A', 11:'J', 12:'Q', 13:'K', 0:'JK' };
         
+        let currentMode = 'multi';
         let myIdx = -1;
         let myName = "";
-        let myRoom = "";
         let myHand = [];
         let selected = [];
+        let lastFieldLength = 0; // アニメーション判定用
+
+        function goHome() {
+            document.getElementById('setup-screen').style.display = 'none';
+            document.getElementById('home-screen').style.display = 'flex';
+        }
+
+        function showSetup(mode) {
+            currentMode = mode;
+            document.getElementById('home-screen').style.display = 'none';
+            document.getElementById('setup-screen').style.display = 'flex';
+            
+            // シングルの場合はルーム入力不要
+            if(mode === 'single') {
+                document.getElementById('room-group').style.display = 'none';
+                document.getElementById('setup-title').innerText = "ひとりであそぶ設定";
+            } else {
+                document.getElementById('room-group').style.display = 'block';
+                document.getElementById('setup-title').innerText = "みんなであそぶ設定";
+            }
+        }
 
         function joinGame() {
             let nInput = document.getElementById('name-input');
             let rInput = document.getElementById('room-input');
-            let name = nInput.value.trim();
+            let name = nInput.value.trim() || "Player";
             let room = rInput.value.trim();
-            
-            if(!name) return alert("名前を入力してください");
-            if(!room) return alert("合言葉を入力してください");
-            
-            myName = name;
-            myRoom = room;
 
-            document.getElementById('login-screen').style.display = 'none';
-            document.getElementById('wait-screen').style.display = 'flex';
-            document.getElementById('disp-room-name').innerText = room;
-            document.getElementById('game-room-name').innerText = room;
+            if(currentMode === 'multi' && !room) return alert("合言葉を入力してください");
+
+            myName = name;
             
-            socket.emit('joinGame', { name: myName, roomName: myRoom });
+            document.getElementById('setup-screen').style.display = 'none';
+            
+            if(currentMode === 'multi') {
+                document.getElementById('wait-screen').style.display = 'flex';
+                document.getElementById('wait-room-display').innerText = "ROOM: " + room;
+            }
+
+            socket.emit('joinGame', { 
+                mode: currentMode,
+                name: myName, 
+                roomName: room 
+            });
         }
 
         socket.on('initInfo', (data) => {
             myIdx = data.myIdx;
             document.getElementById('my-name').innerText = myName;
+            document.getElementById('game-room-name').innerText = data.roomName;
         });
 
         socket.on('playerUpdate', (data) => {
             document.getElementById('p-count').innerText = data.count;
-            let listHtml = "参加者:<br>" + data.names.join("<br>");
-            document.getElementById('member-list').innerHTML = listHtml;
+            document.getElementById('member-list').innerHTML = data.names.join("<br>");
+            
+            // シングルプレイは即開始されるのでwait画面スキップ
+            if(currentMode === 'single') {
+                document.getElementById('wait-screen').style.display = 'none';
+            }
             if(data.count === 4) {
                 document.getElementById('wait-screen').style.display = 'none';
                 document.getElementById('game-table').style.display = 'block';
@@ -142,23 +224,42 @@
         });
 
         socket.on('gameFull', () => {
-            alert("その部屋は満員です");
+            alert("満員かエラーです。ホームに戻ります。");
             location.reload();
         });
 
         socket.on('updateState', (state) => {
-            document.getElementById('wait-screen').style.display = 'none';
+            document.getElementById('result-screen').style.display = 'none'; // リザルト消去
             document.getElementById('game-table').style.display = 'block';
 
             myHand = state.myHand;
             renderHand();
-            renderField(state.field);
+            renderField(state.field, state.lastPlayType); // アニメ用引数追加
             renderInfo(state);
             renderOpponents(state);
         });
 
         socket.on('msg', (txt) => {
             document.getElementById('msg-box').innerText = txt;
+        });
+
+        // リザルト表示
+        socket.on('roundResult', (data) => {
+            let tbody = document.getElementById('score-body');
+            tbody.innerHTML = "";
+            
+            // スコア順にソート
+            let sorted = [...data.results].sort((a,b) => b.score - a.score);
+
+            sorted.forEach(res => {
+                let tr = document.createElement('tr');
+                let ptStr = (res.roundPt > 0 ? "+" : "") + res.roundPt;
+                tr.innerHTML = `<td>${res.name}</td><td>${ptStr}</td><td>${res.score}</td>`;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('res-title').innerText = data.isFinal ? "最終結果" : `ラウンド ${data.round} 終了`;
+            document.getElementById('result-screen').style.display = 'flex';
         });
 
         function renderHand() {
@@ -177,21 +278,32 @@
             d.className = "card";
             if(c.suit==='♥'||c.suit==='♦') d.classList.add('red');
             let disp = DISPLAYS[c.num] || c.num;
-            d.innerHTML = `<div>${disp}</div><div style="font-size:24px; text-align:center;">${c.suit}</div><div style="text-align:right; transform:rotate(180deg);">${disp}</div>`;
+            d.innerHTML = `<div>${disp}</div><div style="font-size:20px; text-align:center;">${c.suit}</div><div style="text-align:right; transform:rotate(180deg);">${disp}</div>`;
             return d;
         }
 
-        function renderField(cards) {
+        function renderField(cards, playType) {
             const div = document.getElementById('field-cards');
+            
+            // 場がリセットされたか、カードが増えたかを判定
+            let isNewPlay = (cards.length > 0 && (cards.length !== lastFieldLength || playType !== 'pass'));
+            lastFieldLength = cards.length;
+
             div.innerHTML = "";
-            cards.forEach(c => div.appendChild(createCardEl(c)));
+            cards.forEach(c => {
+                let el = createCardEl(c);
+                if(isNewPlay) el.classList.add('card-anim'); // アニメクラス付与
+                div.appendChild(el);
+            });
         }
 
         function renderInfo(state) {
             document.getElementById('round-num').innerText = state.info.round;
+            document.getElementById('max-round').innerText = state.info.maxRounds;
             document.getElementById('bdg-rev').style.display = state.info.rev ? 'block' : 'none';
             document.getElementById('bdg-11').style.display = state.info.eleven ? 'block' : 'none';
             document.getElementById('bdg-bind').style.display = state.info.bind ? 'block' : 'none';
+
             let isMyTurn = (state.turn === myIdx);
             document.getElementById('btn-play').disabled = !isMyTurn;
             document.getElementById('btn-pass').disabled = !isMyTurn;
@@ -205,8 +317,11 @@
                 { id: 'area-right', idx: (myIdx + 3) % 4 }
             ];
             let finished = [...state.winners, ...state.fouled];
+
             positions.forEach(pos => {
-                let pName = state.names[pos.idx] || "Player";
+                let pName = state.names[pos.idx] || "CPU";
+                let pScore = state.scores[pos.idx] || 0;
+                
                 let el = document.getElementById(pos.id);
                 if(state.turn === pos.idx && !finished.includes(pos.idx)) el.classList.add('active-turn');
                 else el.classList.remove('active-turn');
@@ -219,11 +334,15 @@
                 let rnkElId = pos.id.replace('area-', 'rnk-');
                 document.getElementById(rnkElId).innerText = rnkStr;
 
-                if(pos.id !== 'area-bottom') {
+                if(pos.id === 'area-bottom') {
+                    document.getElementById('my-score').innerText = pScore;
+                } else {
                     let cntId = pos.id.replace('area-', 'cnt-');
                     let nmId = pos.id.replace('area-', 'nm-');
+                    let scId = pos.id.replace('area-', 'sc-');
                     document.getElementById(cntId).innerText = state.counts[pos.idx];
                     document.getElementById(nmId).innerText = pName;
+                    document.getElementById(scId).innerText = pScore + "pt";
                     el.style.opacity = finished.includes(pos.idx) ? 0.5 : 1;
                 }
             });

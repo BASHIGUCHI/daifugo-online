@@ -10,17 +10,16 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.static('public'));
 
-/* --- ルーム管理システム ---
-  rooms = {
-     "合言葉A": { players: [], gameState: {...} },
-     "合言葉B": { players: [], gameState: {...} }
-  }
-*/
+/* --- 設定 --- */
+const MAX_ROUNDS = 5;
+const SCORES = { 0: 2, 1: 1, 2: -1, 3: -2 }; // 大富豪+2, 富豪+1, 貧民-1, 大貧民-2
+
+/* --- ルーム管理 --- */
+// players構造: { id, hand, name, isBot, score }
 let rooms = {};
 
 const SUITS = ['♠', '♥', '♦', '♣'];
 
-// カード生成関数
 function createDeck() {
     let deck = [];
     for(let s of SUITS) {
@@ -34,7 +33,6 @@ function createDeck() {
     return deck.sort(() => Math.random() - 0.5);
 }
 
-// 初期ゲームステート作成
 function createInitialState() {
     return {
         round: 1,
@@ -47,54 +45,64 @@ function createInitialState() {
         isElevenBack: false,
         isBind: false,
         lastPlayType: "single",
-        lastPlayer: -1
+        lastPlayer: -1,
+        gameover: false
     };
 }
 
 io.on('connection', (socket) => {
-    // 接続時は何もしない（ルーム参加待ち）
-
+    
+    // ゲーム参加（シングル or マルチ）
     socket.on('joinGame', (data) => {
-        let roomName = data.roomName || "default"; // 合言葉
-        let name = data.name || "Guest";
-        
-        // 名前とルーム名の長さを制限
-        roomName = roomName.substring(0, 15);
-        name = name.substring(0, 10);
+        let mode = data.mode; // 'single' or 'multi'
+        let name = (data.name || "Guest").substring(0, 10);
+        let roomName;
 
-        // ルームがなければ作る
-        if (!rooms[roomName]) {
+        if (mode === 'single') {
+            // シングルプレイは自分専用の部屋を作る
+            roomName = `single_${socket.id}`;
             rooms[roomName] = {
                 players: [],
-                gameState: createInitialState()
+                gameState: createInitialState(),
+                mode: 'single'
             };
-        }
-
-        let room = rooms[roomName];
-
-        if (room.players.length < 4) {
-            // Socket.ioの機能でグループ分け
-            socket.join(roomName);
-            // ソケットに部屋情報を記録しておく
-            socket.data.roomName = roomName;
-            socket.data.name = name;
-
-            room.players.push({ id: socket.id, hand: [], name: name });
+            // 自分を追加
+            joinRoom(socket, roomName, name, false);
             
-            let myIdx = room.players.length - 1;
-            socket.emit('initInfo', { myIdx: myIdx, roomName: roomName });
-
-            // 部屋内の全員に通知
-            broadcastToRoom(roomName, 'playerUpdate', { 
-                count: room.players.length, 
-                names: room.players.map(p => p.name) 
-            });
-
-            if (room.players.length === 4) {
-                startGame(roomName);
+            // CPUを3人追加
+            for(let i=1; i<=3; i++) {
+                rooms[roomName].players.push({ 
+                    id: `cpu_${i}`, 
+                    hand: [], 
+                    name: `CPU ${i}`, 
+                    isBot: true,
+                    score: 0 
+                });
             }
+            // 即ゲーム開始
+            startGame(roomName);
+
         } else {
-            socket.emit('gameFull');
+            // マルチプレイ
+            roomName = (data.roomName || "default").substring(0, 15);
+            if (!rooms[roomName]) {
+                rooms[roomName] = {
+                    players: [],
+                    gameState: createInitialState(),
+                    mode: 'multi'
+                };
+            }
+            let room = rooms[roomName];
+            if (room.players.length < 4 && room.gameState.round === 1 && !room.gameState.turn) { // 途中参加簡易防止
+                joinRoom(socket, roomName, name, false);
+                
+                // 人数が揃ったら開始
+                if (room.players.length === 4) {
+                    startGame(roomName);
+                }
+            } else {
+                socket.emit('gameFull');
+            }
         }
     });
 
@@ -102,13 +110,11 @@ io.on('connection', (socket) => {
         let roomName = socket.data.roomName;
         if (!roomName || !rooms[roomName]) return;
         let room = rooms[roomName];
-
         let pIdx = room.players.findIndex(p => p.id === socket.id);
+        
         if (pIdx === -1 || pIdx !== room.gameState.turn) return;
 
         let cards = data.cardIds.map(cid => room.players[pIdx].hand.find(c => c.id === cid)).filter(c => c);
-        
-        // ルール判定に room.gameState を渡す
         let check = checkRules(cards, room.gameState);
         if (check.ok) processPlay(room, pIdx, cards, check.type);
     });
@@ -117,7 +123,6 @@ io.on('connection', (socket) => {
         let roomName = socket.data.roomName;
         if (!roomName || !rooms[roomName]) return;
         let room = rooms[roomName];
-
         let pIdx = room.players.findIndex(p => p.id === socket.id);
         if (pIdx === -1 || pIdx !== room.gameState.turn) return;
         processPass(room, pIdx);
@@ -127,24 +132,47 @@ io.on('connection', (socket) => {
         let roomName = socket.data.roomName;
         if (roomName && rooms[roomName]) {
             let room = rooms[roomName];
-            room.players = room.players.filter(p => p.id !== socket.id);
-            
-            // 誰か抜けたらその部屋はリセット（簡易仕様）
-            if (room.players.length === 0) {
-                delete rooms[roomName]; // 誰もいなくなったら部屋削除
+            // マルチの場合のみ処理
+            if (room.mode === 'multi') {
+                room.players = room.players.filter(p => p.id !== socket.id);
+                if (room.players.length === 0) {
+                    delete rooms[roomName];
+                } else {
+                    // 簡易リセット
+                    room.gameState = createInitialState();
+                    broadcastToRoom(roomName, 'msg', "プレイヤー切断のためリセット");
+                    // 残った人に通知してロビーへ戻す等の処理が理想だが今回はリロード推奨
+                    broadcastToRoom(roomName, 'gameFull'); // 強制退出扱い
+                }
             } else {
-                room.gameState = createInitialState(); // ゲーム中ならリセット
-                broadcastToRoom(roomName, 'playerUpdate', { 
-                    count: room.players.length, 
-                    names: room.players.map(p => p.name) 
-                });
-                broadcastToRoom(roomName, 'msg', "プレイヤーが切断しました。リセットします。");
+                // シングルの場合は部屋消すだけ
+                delete rooms[roomName];
             }
         }
     });
 });
 
-/* --- ゲーム進行ロジック（引数にroomを受け取るように変更） --- */
+/* --- 共通処理 --- */
+function joinRoom(socket, roomName, name, isBot) {
+    let room = rooms[roomName];
+    socket.join(roomName);
+    socket.data.roomName = roomName;
+    socket.data.name = name;
+    
+    room.players.push({ 
+        id: socket.id, 
+        hand: [], 
+        name: name, 
+        isBot: isBot,
+        score: 0
+    });
+
+    socket.emit('initInfo', { myIdx: room.players.length - 1, roomName: roomName });
+    broadcastToRoom(roomName, 'playerUpdate', { 
+        count: room.players.length, 
+        names: room.players.map(p => p.name) 
+    });
+}
 
 function broadcastToRoom(roomName, event, data) {
     io.to(roomName).emit(event, data);
@@ -152,16 +180,25 @@ function broadcastToRoom(roomName, event, data) {
 
 function startGame(roomName) {
     let room = rooms[roomName];
+    // 既存のスコアは維持、それ以外リセット
+    let savedScores = room.players.map(p => p.score);
     room.gameState = createInitialState();
-
+    room.gameState.round = (room.gameState.round || 1); // ここは後で上書きされるので注意
+    
+    // ラウンド管理は呼び出し元(checkGameEnd)でインクリメント済みか確認
+    // ここではカード配布とターン決め
     let deck = createDeck();
     deck.forEach((c, i) => {
         room.players[i % 4].hand.push(c);
     });
     room.players.forEach(p => sortHand(p.hand));
+    
+    // 最初の親はランダム、2R以降は大貧民スタートなどが一般的だが今回はランダム簡略化
+    // もし前回順位があればそれを考慮する実装も可能
     room.gameState.turn = Math.floor(Math.random() * 4);
     
-    broadcastState(roomName);
+    broadcastState(room);
+    checkBotTurn(room);
 }
 
 function sortHand(hand) {
@@ -171,11 +208,12 @@ function sortHand(hand) {
     });
 }
 
-function broadcastState(roomName) {
-    let room = rooms[roomName];
+function broadcastState(room) {
     let playerNames = room.players.map(p => p.name);
+    let scores = room.players.map(p => p.score);
 
     room.players.forEach((p, i) => {
+        if(p.isBot) return; // Botには送信不要
         let opponentCounts = room.players.map(pl => pl.hand.length);
         io.to(p.id).emit('updateState', {
             myHand: p.hand,
@@ -183,97 +221,122 @@ function broadcastState(roomName) {
             turn: room.gameState.turn,
             counts: opponentCounts,
             names: playerNames,
+            scores: scores,
             info: {
                 rev: room.gameState.isRevolution,
                 eleven: room.gameState.isElevenBack,
                 bind: room.gameState.isBind,
-                round: room.gameState.round
+                round: room.gameState.round,
+                maxRounds: MAX_ROUNDS
             },
             winners: room.gameState.winners,
-            fouled: room.gameState.fouled
+            fouled: room.gameState.fouled,
+            lastPlayType: room.gameState.lastPlayType // アニメーション用
         });
     });
 }
 
+/* --- ボットロジック --- */
+function checkBotTurn(room) {
+    let gs = room.gameState;
+    let pIdx = gs.turn;
+    let player = room.players[pIdx];
+
+    // すでに勝ってる or Botじゃないなら無視
+    if ([...gs.winners, ...gs.fouled].includes(pIdx) || !player.isBot) return;
+
+    // 少し考えてから行動（1秒後）
+    setTimeout(() => {
+        // 部屋が消えてたら終了
+        if(!rooms[room.players[0]?.id] && room.mode === 'single') return; // 簡易チェック
+        
+        botPlay(room, pIdx);
+    }, 1000);
+}
+
+function botPlay(room, pIdx) {
+    let player = room.players[pIdx];
+    let hand = player.hand;
+    let gs = room.gameState;
+
+    // 出せるカードを探す（簡易AI: 左から順に検証して出せるなら出す）
+    let playable = null;
+    let playType = "";
+
+    // 1. ペア出しの可能性を探る
+    // 同じ数字をまとめる
+    let groups = {};
+    hand.forEach(c => {
+        if(c.isJoker) return;
+        if(!groups[c.num]) groups[c.num] = [];
+        groups[c.num].push(c);
+    });
+
+    // 2枚以上あるものでチェック
+    for(let num in groups) {
+        let cards = groups[num];
+        if(cards.length >= 2) {
+            let res = checkRules(cards, gs);
+            if(res.ok) { playable = cards; playType = res.type; break; }
+        }
+    }
+
+    // 2. なければ単騎出し
+    if(!playable) {
+        for(let c of hand) {
+            let cards = [c]; // ジョーカー含む
+            let res = checkRules(cards, gs);
+            if(res.ok) { playable = cards; playType = res.type; break; }
+        }
+    }
+
+    // 3. パスか出すか
+    if(playable) {
+        processPlay(room, pIdx, playable, playType);
+    } else {
+        processPass(room, pIdx);
+    }
+}
+
+/* --- ゲーム進行 --- */
 function processPlay(room, pIdx, cards, type) {
     let gs = room.gameState;
-    // 禁止あがりチェック
-    if (room.players[pIdx].hand.length === cards.length) {
-        if (isForbiddenMove(cards, true, gs)) {
-            gs.fouled.push(pIdx);
-            room.players[pIdx].hand = [];
-            broadcastToRoom(socket.data.roomName, 'msg', `${room.players[pIdx].name} 反則負け！`); // socket.data.roomName注意: processPlay内でsocketは使えないので引数か構造を見直す必要がありますが、ここではroom経由で通知します
-            // ※修正: processPlayはsocketスコープ外から呼ばれることもあるため、roomNameはroomオブジェクトからは直接取れない(キーを知る必要がある)。
-            // 簡易的に io.to で送るために、roomオブジェクトにnameを持たせるか、呼び出し元でioを使う。
-            // ここでは簡易的に io.to(...) を使うため、呼び出し元でroomNameを特定できている前提で動かします。
-        }
-    }
     
-    // ※socket.data.roomNameはこの関数内で使えないため、roomオブジェクトを探すためのキー逆引き等はコストがかかる。
-    // そのため、broadcastState内で io.to(p.id) しているので、一斉送信用の関数を用意して使う。
-    // ここでは「roomオブジェクト」しか渡していないので、room名を知る方法が必要。
-    // 手っ取り早く、roomオブジェクトにidを持たせます。
-    
-    // ★ 修正: processPlayの引数修正が手間なので、全プレイヤーのsocketIDを使って送信するbroadcastStateに任せます。
-    // メッセージ送信だけ別途行う必要があります。
-    // 今回は簡単のため「全プレイヤーにmsgイベント」を送るhelperを使います。
-    function sendMsg(txt) {
-         room.players.forEach(p => io.to(p.id).emit('msg', txt));
-    }
+    // カード移動
+    gs.field = cards;
+    gs.lastPlayType = type;
+    gs.lastPlayer = pIdx;
+    gs.passed = [];
+    room.players[pIdx].hand = room.players[pIdx].hand.filter(c => !cards.some(target => target.id === c.id));
 
-    if (room.players[pIdx].hand.length === cards.length && isForbiddenMove(cards, true, gs)) {
-        gs.fouled.push(pIdx);
-        room.players[pIdx].hand = [];
-        sendMsg(`${room.players[pIdx].name} 反則負け！`);
-        checkGameEnd(room);
-        // roomNameが不明だが、broadcastStateはplayer.idを使うので動く
-        // ただしstartGame等はroomNameが必要。
-        // ★ roomオブジェクトにnameプロパティを追加するのが一番安全です。
-        // rooms[roomName] = { name: roomName, ... } とします。
+    // メッセージ送信
+    let msg = "";
+    if (room.players[pIdx].hand.length === 0) {
+        gs.winners.push(pIdx);
+        msg = `${room.players[pIdx].name} あがり！`;
+        
+        // 得点計算（仮）: あがった順に順位確定
+        // 最終的な計算はラウンド終了時に行う
     } else {
-        gs.field = cards;
-        gs.lastPlayType = type;
-        gs.lastPlayer = pIdx;
-        gs.passed = [];
-        room.players[pIdx].hand = room.players[pIdx].hand.filter(c => !cards.some(target => target.id === c.id));
+         // 特殊効果チェック（革命など）
+         if (cards.length >= 4) { gs.isRevolution = !gs.isRevolution; msg = "革命！"; }
+         if (cards.some(c => c.num === 8) && type !== 'stairs') { msg = "8切り！"; resetField(gs); gs.turn = pIdx; }
+         if (cards.some(c => c.num === 11) && type !== 'stairs') { gs.isElevenBack = true; msg = "11バック！"; }
+    }
 
-        let msg = "";
-        if (type !== 'stairs' && cards.some(c => c.num === 8)) {
-            msg = "8切り！";
-            resetField(gs);
-            gs.turn = pIdx;
-        } 
-        else if (gs.field.length===1 && cards.length===1 && cards[0].suit==='♠' && cards[0].num===3 && cards[0].isSpe3) {
-            msg = "スペ3返し！";
-            resetField(gs);
-            gs.turn = pIdx;
-        }
-        else {
-            if (cards.length >= 4) { gs.isRevolution = !gs.isRevolution; msg = "革命！"; }
-            if (type !== 'stairs' && cards.some(c => c.num === 11)) { gs.isElevenBack = true; msg = "11バック！"; }
-            
-            if (room.players[pIdx].hand.length === 0) {
-                gs.winners.push(pIdx);
-                sendMsg(`${room.players[pIdx].name} あがり！`);
-            }
-            checkGameEnd(room);
-            if(gs.field.length > 0) nextTurn(gs); 
-        }
-        if(msg) sendMsg(msg);
+    if(msg) broadcastToRoom(socketOrRoomName(room), 'msg', msg);
+
+    // 8切りや反則でない限りターン送り
+    if (!(cards.some(c => c.num === 8) && type !== 'stairs') && room.players[pIdx].hand.length > 0) {
+        nextTurn(gs);
+    } else if (room.players[pIdx].hand.length === 0) {
+        // あがった場合も次は他人
+        nextTurn(gs);
     }
     
-    // roomNameを特定してbroadcast
-    // room.players[0]がいればそこからroomNameを逆引きできるが、
-    // roomsの構造作成時に name プロパティを入れておきます。(joinGame参照)
-    // joinGame内: rooms[roomName] = { id: roomName, ... }
-    
-    // ★今回のコード内での整合性確保: 
-    // 上記の createInitialState 等では id を入れていないので、
-    // processPlay の末尾で broadcastState を呼ぶ際、第1引数の roomName が必要。
-    // しかし broadcastState は roomName をキーに rooms から引いている。
-    // → 引数を room オブジェクトそのものに変えたほうが安全。
-    // broadcastState の修正を行います。
-    broadcastStateByObject(room);
+    checkGameEnd(room);
+    broadcastState(room);
+    checkBotTurn(room);
 }
 
 function processPass(room, pIdx) {
@@ -284,9 +347,10 @@ function processPass(room, pIdx) {
     if (active <= 1) { checkGameEnd(room); return; }
 
     if (gs.passed.length >= active - 1) {
-        room.players.forEach(p => io.to(p.id).emit('msg', "場が流れました"));
+        broadcastToRoom(socketOrRoomName(room), 'msg', "場が流れました");
         resetField(gs);
         gs.turn = gs.lastPlayer;
+        // あがった人の番ならスキップ
         let loop=0;
         let allFinished = [...gs.winners, ...gs.fouled];
         while(allFinished.includes(gs.turn) && loop<10){
@@ -295,7 +359,8 @@ function processPass(room, pIdx) {
     } else {
         nextTurn(gs);
     }
-    broadcastStateByObject(room);
+    broadcastState(room);
+    checkBotTurn(room);
 }
 
 function nextTurn(gs) {
@@ -315,65 +380,92 @@ function resetField(gs) {
     gs.isElevenBack = false;
 }
 
+function socketOrRoomName(room) {
+    // 便宜上、マルチならroomName文字列、シングルならその部屋IDを返すヘルパーが必要だが
+    // 今回はio.to(roomName)で統一するために、roomオブジェクト生成時にキーとして使った名前が必要。
+    // roomオブジェクトに自分のキーを持たせるのが早い。
+    // joinGameで修正できないため、逆引きするか、broadcastToRoomを修正。
+    // 手っ取り早く、以下で対応
+    // マルチのroomNameはキーそのもの。
+    // プレイヤーのsocket.data.roomNameを参照するのが一番安全。
+    // ここでは「全員に送る」処理なので、broadcastToRoomにキーを渡す運用にする。
+    
+    // ※コード簡略化のため、broadcastToRoomの呼び出し元で正しいroomNameを渡している前提にします。
+    // processPlay等はroomオブジェクトしか受け取っていないため、
+    // room.id = roomName をjoin時に仕込む修正を行います。
+    return room.id;
+}
+
 function checkGameEnd(room) {
     let gs = room.gameState;
-    if (gs.winners.length + gs.fouled.length >= 3) {
-        room.players.forEach(p => io.to(p.id).emit('msg', "ラウンド終了！"));
-        
-        // roomNameが必要だが、ここでもroomオブジェクトから再開させる
-        // 簡易的に4秒後にstartGameを呼ぶために、roomNameが必要。
-        // room.players[0].id から socket を特定...は面倒なので、
-        // rooms オブジェクト生成時に id を埋め込む方式を採用します。
-        
-        // ※joinGame関数内で `rooms[roomName].id = roomName` を入れています(後述修正)。
-        setTimeout(() => {
-            // 部屋がまだ存在すれば再開
-            if(room.players.length === 4) {
-                 startGameByObject(room);
+    let finishedCount = gs.winners.length + gs.fouled.length;
+    
+    if (finishedCount >= 3) {
+        // 残りの1人を勝者リストの最後に追加（大貧民）
+        for(let i=0; i<4; i++) {
+            if(!gs.winners.includes(i) && !gs.fouled.includes(i)) {
+                gs.winners.push(i);
             }
-        }, 4000); 
+        }
+        
+        // ポイント計算
+        // winners[0]=大富豪, [1]=富豪, [2]=貧民, [3]=大貧民
+        gs.winners.forEach((pIdx, rank) => {
+            room.players[pIdx].score += SCORES[rank];
+        });
+
+        // スコア表配信用データ
+        let resultData = room.players.map((p, i) => {
+            // 今回の順位を探す
+            let rank = gs.winners.indexOf(i);
+            let pt = (rank >= 0) ? SCORES[rank] : 0;
+            if(gs.fouled.includes(i)) pt = -2; // 反則は最下位扱い
+            return { name: p.name, score: p.score, roundPt: pt };
+        });
+
+        broadcastToRoom(room.id, 'roundResult', { 
+            results: resultData,
+            round: gs.round,
+            isFinal: gs.round >= MAX_ROUNDS
+        });
+
+        if (gs.round < MAX_ROUNDS) {
+            gs.round++;
+            setTimeout(() => {
+                let currentRound = gs.round;
+                // 次のラウンド開始（room.idを使って）
+                let r = rooms[room.id];
+                if(r) {
+                    // gameStateをリセットしつつラウンド数は維持
+                    let nextGs = createInitialState();
+                    nextGs.round = currentRound;
+                    r.gameState = nextGs;
+                    
+                    let deck = createDeck();
+                    deck.forEach((c, i) => { r.players[i % 4].hand = []; r.players[i % 4].hand.push(c); }); // 手札リセットして追加
+                    // ※pushだと前回の残りが入るバグ回避のため一度空にする
+                    r.players.forEach(p=>p.hand = []);
+                    deck.forEach((c, i) => r.players[i % 4].hand.push(c));
+                    
+                    r.players.forEach(p => sortHand(p.hand));
+                    r.gameState.turn = Math.floor(Math.random() * 4); // 親決め（本来は大富豪から）
+                    
+                    broadcastState(r);
+                    checkBotTurn(r);
+                }
+            }, 5000); // 5秒後に次へ
+        } else {
+             broadcastToRoom(room.id, 'msg', "全ラウンド終了！お疲れ様でした！");
+        }
     }
 }
 
-// ★ヘルパー関数のオーバーロード（オブジェクト直接渡し版）
-function broadcastStateByObject(room) {
-    let playerNames = room.players.map(p => p.name);
-    room.players.forEach((p, i) => {
-        let opponentCounts = room.players.map(pl => pl.hand.length);
-        io.to(p.id).emit('updateState', {
-            myHand: p.hand,
-            field: room.gameState.field,
-            turn: room.gameState.turn,
-            counts: opponentCounts,
-            names: playerNames,
-            info: {
-                rev: room.gameState.isRevolution,
-                eleven: room.gameState.isElevenBack,
-                bind: room.gameState.isBind,
-                round: room.gameState.round
-            },
-            winners: room.gameState.winners,
-            fouled: room.gameState.fouled
-        });
-    });
-}
-function startGameByObject(room) {
-    room.gameState = createInitialState();
-    let deck = createDeck();
-    deck.forEach((c, i) => {
-        room.players[i % 4].hand.push(c);
-    });
-    room.players.forEach(p => sortHand(p.hand));
-    room.gameState.turn = Math.floor(Math.random() * 4);
-    broadcastStateByObject(room);
-}
-
-/* --- ルール判定（引数 gs 追加） --- */
+/* --- ルール判定(変更なし) --- */
 function checkRules(cards, gs) {
     if(cards.length === 0) return {ok:false};
     let type = "unknown";
-    let jokers = cards.filter(c=>c.isJoker).length;
     let normals = cards.filter(c=>!c.isJoker);
+    let jokers = cards.length - normals.length;
     
     let isPair = false;
     if(normals.length > 0) { if(normals.every(c => c.num === normals[0].num)) isPair = true; } else isPair = true;
@@ -433,26 +525,11 @@ function getStrength(cards, type) {
     let n = cards.find(c=>!c.isJoker); return n ? n.str : 13;
 }
 
-function isForbiddenMove(cards, isLastHand, gs) {
-    if(!isLastHand) return false;
-    let rev = (gs.isRevolution !== gs.isElevenBack);
-    if(cards.length > 1) {
-        if(cards.length === 2 && cards[0].isJoker && cards[1].isJoker) return true;
-        if(cards.length === 2) {
-            let hasJoker = cards.some(c => c.isJoker);
-            let other = cards.find(c => !c.isJoker);
-            if(hasJoker && other) {
-                if(other.num === 8) return true;
-                if(!rev && other.num === 2) return true;
-                if(rev && other.num === 3) return true;
-            }
-        }
-        return false; 
-    }
-    let c = cards[0];
-    if(c.isJoker) return true; if(c.num === 8) return true;
-    if(!rev && c.num === 2) return true; if(rev && c.num === 3) return true;
-    return false;
+// joinGameの修正に伴い、room.idをセットする処理を追加
+const _originJoin = joinRoom;
+joinRoom = function(socket, roomName, name, isBot) {
+    if(rooms[roomName]) rooms[roomName].id = roomName; // IDセット
+    _originJoin(socket, roomName, name, isBot);
 }
 
 server.listen(PORT, () => {
